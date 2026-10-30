@@ -66,6 +66,10 @@ We are replacing that with a self-hosted **Windmill Community Edition** instance
 **`f/rissk/s3` — built-in type `s3`** (one per bucket, shared by all surveys):
 `accessKey`, `secretKey`, `region`, `endPoint` (`s3.amazonaws.com` for AWS), `bucket`
 (informational; the roots below are authoritative), `useSSL`, `pathStyle`.
+Its `accessKey`, `secretKey` and `region` fields are `$var:` references to the shared
+variables `f/shared/aws_access_key_id`, `f/shared/aws_secret_access_key` and
+`f/shared/aws_default_region`, which ppp's container job reads too, so a bucket key exists
+once in Windmill.
 
 **`f/rissk/survey_<survey>` — custom type `rissk_survey`** (one per survey). JSON Schema
 (kept in the repo at `windmill/rissk_survey.schema.json`, pasted once into the UI's
@@ -117,6 +121,10 @@ After the repo is extracted (section 3) the runner **materialises** an env:
   folder: zips are staged, unzipped and the `20_INTERIM` intermediates written there,
   and all of it disappears with the job. This matches the notebook's purge-after-run
   behaviour, so the cleanup cell has no equivalent and needs none.
+- Single stages run standalone: every `20_INTERIM` file is produced and consumed inside
+  one stage, and stage-to-stage handoff goes through `30_PROCESSED` on `output_root`, so
+  `feature_creation` or `rissk_scoring` alone work from S3 with an empty work folder.
+  rissk keeps no folder on the server (no `/data/projects` entry; see the ppp spec).
 - If `conf/<env>` already exists in the checkout (a committed env of the same name) the
   runner **deletes it first and logs a warning**, so there is never doubt about which
   configuration ran.
@@ -232,10 +240,13 @@ def main(
 
 ### 6. Schedules and the "add a survey" workflow
 
-One schedule per survey, path `f/rissk/<survey>`, pointing at `f/rissk/run_rissk` with
-`survey` = that survey's resource, `storage` = `f/rissk/s3`, defaults for the rest; cron
-and timezone chosen per survey. Jobs on `windmill-worker-1` run one at a time, so two
-surveys scheduled at the same minute serialize.
+The script is step 1 of the **per-survey flow** `f/surveys/<survey>` (rissk, then ppp),
+defined in the ppp spec
+[2026-10-30-windmill-ppp-and-survey-flow-design.md](../../../../ppp/docs/superpowers/specs/2026-10-30-windmill-ppp-and-survey-flow-design.md);
+the schedule lives on the flow, cron and timezone chosen per survey. The step passes
+`survey` = that survey's resource and `storage` = `f/rissk/s3`, defaults for the rest.
+Jobs on `windmill-worker-1` run one at a time, so a run triggered while another is running
+waits in the queue; nothing is refused.
 
 Adding a survey: create a `rissk_survey` resource, create a schedule. Editing a survey:
 edit the resource. No git, no redeploy.
