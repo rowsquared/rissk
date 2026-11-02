@@ -46,3 +46,44 @@ def test_validate_survey_allows_local_output_outside_windmill():
 def test_validate_run_args_rejects(pipeline, repo, ref, msg):
     with pytest.raises(ValueError, match=msg):
         run_rissk.validate_run_args(pipeline, repo, ref)
+
+
+# --- Task 2: materialise the Kedro env -------------------------------------------------
+import yaml
+
+
+def test_materialize_env_writes_globals_and_questionnaires(tmp_path):
+    (tmp_path / "conf").mkdir()
+    env = run_rissk.materialize_env(tmp_path, {**SURVEY, "output_root": "s3://surveytool/"})
+    assert env == "grdslchbs"
+    g = yaml.safe_load((tmp_path / "conf/grdslchbs/globals.yml").read_text())
+    assert g == {"input_root": "s3://surveytool", "work_root": "data",
+                 "output_root": "s3://surveytool", "survey": "grdslchbs"}
+    q = yaml.safe_load((tmp_path / "conf/grdslchbs/questionnaires/slchbs_grenada_2627.yml").read_text())
+    assert q == {"name": "slchbs_grenada_2627", "VERSION": [10, 11], "filter_var": None}
+    assert not (tmp_path / "conf/grdslchbs/parameters.yml").exists()
+
+
+def test_materialize_env_keeps_raw_survey_name_in_globals(tmp_path):
+    (tmp_path / "conf").mkdir()
+    env = run_rissk.materialize_env(tmp_path, {**SURVEY, "survey": "pmpmd copy"})
+    assert env == "pmpmd_copy"
+    g = yaml.safe_load((tmp_path / "conf/pmpmd_copy/globals.yml").read_text())
+    assert g["survey"] == "pmpmd copy"
+
+
+def test_materialize_env_writes_parameters_when_given(tmp_path):
+    (tmp_path / "conf").mkdir()
+    run_rissk.materialize_env(tmp_path, {**SURVEY, "zip_password": "pw",
+                                         "parameters": {"features": {"gps": {"use": False}}}})
+    p = yaml.safe_load((tmp_path / "conf/grdslchbs/parameters.yml").read_text())
+    assert p == {"zip_password": "pw", "features": {"gps": {"use": False}}}
+
+
+def test_materialize_env_replaces_existing_env(tmp_path, capsys):
+    old = tmp_path / "conf/grdslchbs"
+    old.mkdir(parents=True)
+    (old / "stale.yml").write_text("x: 1\n")
+    run_rissk.materialize_env(tmp_path, SURVEY)
+    assert not (old / "stale.yml").exists()
+    assert "replacing committed env conf/grdslchbs" in capsys.readouterr().out

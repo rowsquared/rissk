@@ -26,7 +26,11 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+from pathlib import Path
 from typing import TypedDict
+
+import yaml
 
 PIPELINES: tuple[str, ...] = ("__default__", "data_ingestion", "feature_creation", "rissk_scoring")
 
@@ -97,3 +101,42 @@ def validate_run_args(pipeline: str, repo: str, ref: str) -> None:
         raise ValueError(f"repo must be 'owner/name'; got {repo!r}")
     if not (ref or "").strip():
         raise ValueError("ref must be a branch, tag or commit SHA")
+
+
+def materialize_env(project_root: Path, cfg: dict) -> str:
+    """Write the Kedro env `conf/<env>/` that mirrors a `rissk_survey` resource.
+
+    globals.yml (roots + survey), one questionnaires/<name>.yml per questionnaire, and
+    parameters.yml only when a zip password or parameter overrides are given. A committed
+    env of the same name in the checkout is replaced, with a warning, so the resource is
+    always what runs. Returns the env name.
+    """
+    env = sanitize_env_name(cfg["survey"])
+    env_dir = project_root / "conf" / env
+    if env_dir.exists():
+        print(f"warning: replacing committed env conf/{env} with the Windmill resource", flush=True)
+        shutil.rmtree(env_dir)
+    (env_dir / "questionnaires").mkdir(parents=True)
+
+    def dump(path: Path, data: dict) -> None:
+        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    dump(env_dir / "globals.yml", {
+        "input_root": cfg["input_root"].rstrip("/"),
+        "work_root": "data",
+        "output_root": cfg["output_root"].rstrip("/"),
+        "survey": cfg["survey"],
+    })
+    for q in cfg["questionnaires"]:
+        dump(env_dir / "questionnaires" / f"{q['name']}.yml", {
+            "name": q["name"],
+            "VERSION": list(q.get("VERSION") or []),
+            "filter_var": q.get("filter_var"),
+        })
+    parameters = {}
+    if cfg.get("zip_password"):
+        parameters["zip_password"] = cfg["zip_password"]
+    parameters.update(cfg.get("parameters") or {})
+    if parameters:
+        dump(env_dir / "parameters.yml", parameters)
+    return env
