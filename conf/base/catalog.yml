@@ -1,0 +1,98 @@
+# Data catalog. Paths come from globals (conf/base + the selected env):
+#   ${globals:work_root}   — LOCAL: 10_RAW staging (zips fetched + extracted) AND the
+#                            20_INTERIM intermediates (scratch; each produced-and-consumed
+#                            within one pipeline, so never needs to be on output_root/s3).
+#   ${globals:output_root} — deliverable outputs 30_PROCESSED + 35_SCORES (local or s3://).
+#   keyed by  <survey>.
+#
+# Note: 20_INTERIM lives under work_root (always local), NOT output_root. For local-output
+# envs this is the same place; for s3 output_root it keeps the intermediates off S3.
+#
+# === RAW DATA (local staging — unzip + folder reads are local-filesystem only) ===
+# Zips staged by stage_input_zips_node from <input_root>/<survey>/latest/10_RAW/<name>_*.zip
+survey_zip_partitions:
+  type: partitions.PartitionedDataset
+  path: ${globals:work_root}/${globals:survey}/latest/10_RAW
+  dataset:
+    type: rissk.datasets.PathDataset
+    filename_suffix: ".zip"
+
+# The extracted result (folders)
+extracted_survey_folders:
+  type: partitions.PartitionedDataset
+  path: ${globals:work_root}/${globals:survey}/latest/10_RAW
+  dataset:
+    type: rissk.datasets.PathDataset
+
+# === INGESTED DataFrames ===
+paradata_raw:
+  type: pandas.ParquetDataset
+  filepath: ${globals:work_root}/${globals:survey}/latest/20_INTERIM/${runtime_params:qnr_subdir,''}paradata_raw.parquet
+
+raw_questionnaire:
+  type: pandas.ParquetDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/30_PROCESSED/${runtime_params:qnr_subdir,''}questionnaire.parquet
+
+raw_microdata:
+  type: pandas.ParquetDataset
+  filepath: ${globals:work_root}/${globals:survey}/latest/20_INTERIM/${runtime_params:qnr_subdir,''}microdata_raw.parquet
+
+microdata:
+  type: pandas.ParquetDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/30_PROCESSED/${runtime_params:qnr_subdir,''}microdata.parquet
+
+paradata_processed:
+  type: pandas.ParquetDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/30_PROCESSED/${runtime_params:qnr_subdir,''}paradata_processed.parquet
+
+
+# === FEATURE CREATION DataFrames ===
+item_features_base:
+  type: pandas.ParquetDataset
+  filepath: ${globals:work_root}/${globals:survey}/latest/20_INTERIM/${runtime_params:qnr_subdir,''}item_features_base.parquet
+
+unit_features_base:
+  type: pandas.ParquetDataset
+  filepath: ${globals:work_root}/${globals:survey}/latest/20_INTERIM/${runtime_params:qnr_subdir,''}unit_features_base.parquet
+
+item_features:
+  type: pandas.ParquetDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/30_PROCESSED/${runtime_params:qnr_subdir,''}item_features.parquet
+
+unit_features:
+  type: pandas.ParquetDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/30_PROCESSED/${runtime_params:qnr_subdir,''}unit_features.parquet
+
+# Aggregated AnswerRemoved events (used by rissk_scoring for unit-level s__answer_removed).
+removed_answers:
+  type: pandas.ParquetDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/30_PROCESSED/${runtime_params:qnr_subdir,''}removed_answers.parquet
+
+
+# === SCORING DataFrames ===
+item_scores:
+  type: pandas.ParquetDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/35_SCORES/${runtime_params:qnr_subdir,''}item_scores.parquet
+
+unit_rissk_scores:
+  type: pandas.CSVDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/35_SCORES/${runtime_params:qnr_subdir,''}unit_rissk_scores.csv
+
+responsible_scores:
+  type: pandas.CSVDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/35_SCORES/${runtime_params:qnr_subdir,''}responsible_scores.csv
+
+
+# === COMBINE (survey-level union of per-<qnr> microdata) ===
+# Scans 30_PROCESSED for every <qnr>/microdata.parquet. The top-level union file
+# (microdata.parquet) is also matched (partition key '') and skipped by the node.
+microdata_by_qnr:
+  type: partitions.PartitionedDataset
+  path: ${globals:output_root}/${globals:survey}/latest/30_PROCESSED
+  dataset:
+    type: pandas.ParquetDataset
+  filename_suffix: microdata.parquet
+
+microdata_combined:
+  type: pandas.ParquetDataset
+  filepath: ${globals:output_root}/${globals:survey}/latest/30_PROCESSED/microdata.parquet

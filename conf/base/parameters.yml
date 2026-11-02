@@ -1,0 +1,99 @@
+# Configuration — defined in globals.yml (overridden per env). Exposed to nodes here.
+# questionnaire: Kedro's OmegaConfigLoader merges runtime_params over parameters before
+# interpolation resolution, so a runtime override always wins (the resolver is not invoked for it).
+# The explicit resolver chain documents intent (runtime → globals); the null default allows envs
+# with no single questionnaire (multi-questionnaire runs inject it per invocation).
+questionnaire: ${runtime_params:questionnaire,${globals:questionnaire,null}}
+input_root: ${globals:input_root}
+work_root: ${globals:work_root}
+survey: ${globals:survey}
+
+# Set the password for zip files in local/parameters.yml if needed. 
+# It will override the base/parameters.yml setting.
+zip_password: null
+
+# Feature Engineering Configuration (from configuration/main.yaml)
+# contamination: expected proportion of outliers in clean data (0.01–0.50).
+# Set to 'auto' for any feature to let the algorithm estimate the threshold
+# automatically from the data instead of using a fixed value.
+features:
+  # ── Item-level scored features ──────────────────────────────────────────
+  answer_hour_set:
+    use: true
+    parameters:
+      contamination: auto
+  answer_changed:
+    use: true
+    parameters:
+      contamination: auto
+  answer_removed:
+    use: true
+    parameters:
+      contamination: auto  # scored at unit level from removed_answers dataset
+  answer_selected:
+    use: true
+    parameters:
+      contamination: 0.1
+  answer_duration:
+    use: true
+    parameters:
+      contamination: 0.1
+  first_decimals:
+    use: true
+    parameters:
+      contamination: 0.1
+  first_digit:
+    use: true  # requires numeric_response: true
+  sequence_jump:
+    use: true
+    parameters:
+      contamination: 0.1
+  gps:
+    use: true
+    sub_features: [gps_latitude, gps_longitude, gps_accuracy]
+    parameters:
+      contamination: 0.1
+  answer_position:
+    use: true
+  single_question:
+    use: true
+  multi_option_question:
+    use: true
+
+  # ── Unit-level scored features ──────────────────────────────────────────
+  # Note: time_changed, pause_count, pause_duration are scored whenever the
+  # feature column is present; use: false only suppresses feature creation.
+  time_changed:
+    use: true
+  pause_count:
+    use: true
+  pause_duration:
+    use: true
+  number_unanswered:
+    use: true
+  number_answered:
+    use: true
+  total_duration:
+    use: true
+  total_elapse:
+    use: true
+    parameters:
+      contamination: 0.1
+  days_from_start:
+    use: true
+
+  # ── Feature creation only — not scored ─────────────────────────────────
+  numeric_response:
+    use: true  # required for first_digit; does not produce a score itself
+  last_digit:
+    use: false  # feature built but no scoring function implemented
+  pause_list:
+    use: false  # feature built but no scoring function implemented
+  comment_length:
+    use: false  # feature built but no scoring function implemented
+  comment_set:
+    use: false  # feature built but no scoring function implemented
+  comment_duration:
+    use: false  # feature built but no scoring function implemented
+  string_length:
+    use: false  # feature built but no scoring function implemented

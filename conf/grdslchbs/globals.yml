@@ -1,0 +1,10 @@
+# Local test configuration — `kedro run --env grdslchbs_test`.
+# Processes data/grdslchbs_test (STATA-only export, no paradata).
+# Paths are relative to the project root (repo root), so `data` = repo-root/data.
+# (Real configs would set input_root/output_root to s3://<bucket> for s3in/s3out/s3.)
+
+input_root: "s3://surveytool"
+output_root: "s3://surveytool"
+work_root: "data"
+survey: grdslchbs
+

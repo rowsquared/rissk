@@ -1,0 +1,3 @@
+name: slchbs_grenada_2627
+VERSION: [10, 11, 12, 13]          # [] = all versions found in 10_RAW
+filter_var: {intrv_result: "1"}

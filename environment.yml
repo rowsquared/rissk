@@ -1,0 +1,42 @@
+name: rissk_kedro
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  # R Core — NOT used by the RISSK pipeline. Kept only for running R / IRkernel
+  # notebooks on the Hub; delete this whole block if you don't need R.
+  - r-base>=4.4
+  - r-ggplot2
+  - r-dplyr
+  - r-tidyr
+  - r-readr
+  - r-stringr
+  - pip
+  - pip:
+      # Framework
+      - kedro==1.2.0
+      - kedro-viz>=12.3.0          # also imported by settings.py (hooks), not just `kedro viz`
+      - kedro-datasets[pandas,s3fs,excel,files]>=9.1.0
+
+      # GUI
+      - nicegui>=1.4
+
+      # Visualisation notebooks (notebooks/viz/)
+      - marimo>=0.9
+      - altair>=5.0
+
+      # Core stack
+      - pandas>=2.2.3
+      - numpy>=2.1.0
+      - pyarrow>=18.0.0
+      - boto3>=1.35.0
+
+      # Anomaly detection
+      - pyod>=1.1.5
+      - pythresh>=1.0.3            # required at runtime by pyod's FILTER threshold
+
+      # Notebook Jobs (register the env as a Jupyter kernel)
+      - ipykernel>=6.29
+
+      # The single editable package (Kedro project + ML modules), at the repo root.
+      - -e .

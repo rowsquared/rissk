@@ -1,0 +1,14 @@
+# s3 — read export zips from S3 AND write all outputs to S3 (work_root stays local).
+#   input_root  = s3://<bucket>  — zips at  <input_root>/<survey>/latest/10_RAW/<name>_*.zip
+#   work_root   = local          — ALWAYS local: zips are fetched + unzipped here (unzip is local-only)
+#   output_root = s3://<bucket>  — stages 20→40 at  <output_root>/<survey>/latest/<stage>/
+# Requires s3fs + AWS credentials in the environment (standard chain: env vars or ~/.aws).
+# Run with:  kedro run --env s3
+input_root: "s3://surveytool"       # ← replace with your bucket
+work_root: "data"
+output_root: "s3://surveytool"      # ← replace with your bucket (may differ from input_root)
+survey: grdslchbs_test
+questionnaire:
+  name: slchbs_grenada_2627
+  VERSION: [10, 11, 12, 13]
+  filter_var: null

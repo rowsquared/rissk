@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "required": ["survey", "input_root", "output_root", "questionnaires"],
+  "properties": {
+    "survey": {"type": "string",
+      "description": "Survey folder under the roots: <root>/<survey>/latest/..."},
+    "input_root": {"type": "string",
+      "description": "Where the export zips live, e.g. s3://surveytool (zips at <input_root>/<survey>/latest/10_RAW/<name>_*.zip)"},
+    "output_root": {"type": "string",
+      "description": "Where 30_PROCESSED and 35_SCORES are written, e.g. s3://surveytool. Must be remote: the job folder is deleted after the run."},
+    "questionnaires": {"type": "array", "minItems": 1,
+      "items": {"type": "object", "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "description": "Questionnaire template name as in Survey Solutions"},
+          "VERSION": {"type": "array", "items": {"type": "integer"}, "default": [],
+            "description": "Versions to process; [] = all versions found"},
+          "filter_var": {"type": "object",
+            "description": "Optional paradata filter, e.g. {\"consent_q\": \"1\"}"}}}},
+    "zip_password": {"type": "string", "description": "Optional password of the export zips"},
+    "parameters": {"type": "object",
+      "description": "Optional top-level keys of parameters.yml, deep-merged over conf/base/parameters.yml; e.g. {\"features\": {\"gps\": {\"use\": false}}} disables one feature and keeps the rest"}
+  }
+}

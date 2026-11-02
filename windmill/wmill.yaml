@@ -1,0 +1,14 @@
+# Windmill CLI sync root: run `wmill sync push` from this folder (see README.md,
+# "Deploying the runner"). The scope is deliberately narrow because a push deletes remote
+# items that are in scope but missing here, and the workspace also holds hand-made items
+# (survey resources, credentials, folders) and the ppp repository's ones.
+defaultTs: bun
+includes:
+  - "f/rissk/**"          # only this repository's folder
+excludes: []
+skipVariables: true       # credentials and survey configuration live in Windmill only
+skipResources: true
+skipSecrets: true
+skipFolders: true         # folders are created by hand; a push never touches their owners
+skipResourceTypes: true   # resource types are workspace-wide and ignore `includes`:
+                          # rissk_survey is pushed on its own with `wmill resource-type push`

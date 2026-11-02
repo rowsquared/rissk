@@ -1,0 +1,74 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.flit.module]
+name = "rissk"
+
+[project]
+name = "rissk"
+version = "0.1.2"
+description = "Automatically identify at-risk interviews from your Survey Solutions export files."
+authors = [{ name = "rowsquared" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.13"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+
+# Minimal runtime dependencies — only what the pipeline actually imports.
+dependencies = [
+    "kedro==1.2.0",
+    "kedro-datasets[pandas]>=9.1.0",                  # parquet + CSV + PartitionedDataset
+    "s3fs>=2024.3.1",                                 # s3:// support for input_root/output_root (s3in/s3out/s3 envs)
+    "pandas>=2.2.3",
+    "numpy>=2.1.0",
+    "pyod>=1.1.5",
+    "scipy>=1.10",
+    "scikit-learn>=1.5",
+    "pyyaml>=6.0",
+    "pythresh>=0.3.0",
+]
+
+[project.optional-dependencies]
+# Install with: uv sync --extra gui
+gui = [
+    "nicegui>=1.4",
+]
+# Interactive visualisation notebooks (notebooks/viz/). Install with: uv sync --extra viz
+viz = [
+    "marimo>=0.9",
+    "altair>=5.0",
+]
+test = [
+    "pytest>=8.0",
+    "pytest-cov",
+]
+
+[tool.kedro]
+package_name = "rissk"
+project_name = "rissk"
+kedro_init_version = "1.2.0"
+source_dir = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.kedro_telemetry]
+project_id = "63718528078e46d1bd5fa456d349edb2"
+
+[tool.black]
+line-length = 99
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+)/
+'''
+
+[tool.ruff.lint.isort]
+known_first_party = ["rissk"]
+force_sort_within_sections = true
