@@ -87,3 +87,37 @@ def test_materialize_env_replaces_existing_env(tmp_path, capsys):
     run_rissk.materialize_env(tmp_path, SURVEY)
     assert not (old / "stale.yml").exists()
     assert "replacing committed env conf/grdslchbs" in capsys.readouterr().out
+
+
+# --- Task 3: credentials and logging config --------------------------------------------
+def test_aws_env_for_aws_host_has_no_endpoint():
+    env = run_rissk.aws_env_from_s3({"accessKey": "AK", "secretKey": "SK", "region": "eu-west-1",
+                                     "endPoint": "s3.amazonaws.com", "useSSL": True})
+    assert env == {"AWS_ACCESS_KEY_ID": "AK", "AWS_SECRET_ACCESS_KEY": "SK",
+                   "AWS_DEFAULT_REGION": "eu-west-1", "AWS_REGION": "eu-west-1"}
+
+
+def test_aws_env_for_custom_endpoint():
+    env = run_rissk.aws_env_from_s3({"accessKey": "AK", "secretKey": "SK", "endPoint": "nbg1.your-objectstorage.com"})
+    assert env["AWS_ENDPOINT_URL"] == "https://nbg1.your-objectstorage.com"
+    env = run_rissk.aws_env_from_s3({"accessKey": "AK", "secretKey": "SK", "endPoint": "minio:9000", "useSSL": False})
+    assert env["AWS_ENDPOINT_URL"] == "http://minio:9000"
+
+
+@pytest.mark.parametrize("missing", ["accessKey", "secretKey"])
+def test_aws_env_requires_keys(missing):
+    storage = {"accessKey": "AK", "secretKey": "SK"}
+    storage.pop(missing)
+    with pytest.raises(ValueError, match=missing):
+        run_rissk.aws_env_from_s3(storage)
+
+
+def test_logging_config_is_plain_console(tmp_path):
+    path = run_rissk.write_logging_config(tmp_path)
+    cfg = yaml.safe_load(path.read_text())
+    assert path.name == "kedro_logging.yml"
+    assert cfg["handlers"]["console"]["class"] == "logging.StreamHandler"
+    assert cfg["root"]["handlers"] == ["console"]
+    assert cfg["loggers"]["kedro"]["level"] == "INFO" and cfg["loggers"]["rissk"]["level"] == "INFO"
+    assert run_rissk.kedro_env(path) == {"KEDRO_DISABLE_TELEMETRY": "true", "DO_NOT_TRACK": "1",
+                                         "KEDRO_LOGGING_CONFIG": str(path)}

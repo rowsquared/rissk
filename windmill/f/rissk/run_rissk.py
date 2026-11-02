@@ -140,3 +140,51 @@ def materialize_env(project_root: Path, cfg: dict) -> str:
     if parameters:
         dump(env_dir / "parameters.yml", parameters)
     return env
+
+
+def aws_env_from_s3(storage: dict) -> dict[str, str]:
+    """Map Windmill's `s3` resource to the AWS environment variables s3fs/botocore read.
+
+    `AWS_ENDPOINT_URL` is set only for a non-AWS endpoint (MinIO, Hetzner, R2), with
+    `http://` when `useSSL` is explicitly false. `pathStyle` has no env-var equivalent and
+    is ignored.
+    """
+    for key in ("accessKey", "secretKey"):
+        if not storage.get(key):
+            raise ValueError(f"s3 resource field {key} is required")
+    env = {"AWS_ACCESS_KEY_ID": storage["accessKey"], "AWS_SECRET_ACCESS_KEY": storage["secretKey"]}
+    if storage.get("region"):
+        env["AWS_DEFAULT_REGION"] = storage["region"]
+        env["AWS_REGION"] = storage["region"]
+    endpoint = (storage.get("endPoint") or "").strip()
+    if endpoint and not endpoint.endswith("amazonaws.com"):
+        scheme = "http" if storage.get("useSSL") is False else "https"
+        env["AWS_ENDPOINT_URL"] = f"{scheme}://{endpoint}"
+    return env
+
+
+def write_logging_config(job_dir: Path) -> Path:
+    """Write a plain console logging config for Kedro (no rich tables in the Windmill log)."""
+    path = job_dir / "kedro_logging.yml"
+    config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {"simple": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"}},
+        "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "simple",
+                                 "stream": "ext://sys.stdout"}},
+        "loggers": {"kedro": {"level": "INFO"}, "rissk": {"level": "INFO"}},
+        "root": {"handlers": ["console"], "level": "INFO"},
+    }
+    path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def kedro_env(logging_config: Path) -> dict[str, str]:
+    """Environment Kedro reads at import time: no telemetry, our logging config."""
+    return {"KEDRO_DISABLE_TELEMETRY": "true", "DO_NOT_TRACK": "1",
+            "KEDRO_LOGGING_CONFIG": str(logging_config)}
+
+
+def apply_env(mapping: dict[str, str]) -> None:
+    """The one place the runner touches the process environment."""
+    os.environ.update(mapping)
