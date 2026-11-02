@@ -265,3 +265,35 @@ def test_cli_help_runs():
     out = subprocess.run([sys.executable, str(REPO / "windmill/f/rissk/run_rissk.py"), "--help"],
                          capture_output=True, text=True)
     assert out.returncode == 0 and "--survey" in out.stdout
+
+
+# --- Task 6: requirements drift guard, script metadata, resource schema ----------------
+import re
+import tomllib
+
+
+def _normalize(name):
+    return name.lower().replace("_", "-")
+
+
+def test_requirements_header_matches_pyproject():
+    text = (REPO / "windmill/f/rissk/run_rissk.py").read_text().splitlines()
+    start = text.index("#requirements:") + 1
+    header = []
+    for line in text[start:]:
+        if not line.startswith("#") or line.strip() == "#":
+            break
+        header.append(_normalize(re.match(r"#([A-Za-z0-9_.-]+)", line).group(1)))
+    deps = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["dependencies"]
+    expected = {_normalize(re.match(r"[A-Za-z0-9_.-]+", d).group(0)) for d in deps} | {"wmill"}
+    assert set(header) == expected
+
+
+def test_schema_and_metadata_are_consistent():
+    schema = json.loads((REPO / "windmill/rissk_survey.schema.json").read_text())
+    assert set(schema["required"]) == {"survey", "input_root", "output_root", "questionnaires"}
+    meta = yaml.safe_load((REPO / "windmill/f/rissk/run_rissk.script.yaml").read_text())
+    props = meta["schema"]["properties"]
+    assert props["survey"]["format"] == "resource-rissk_survey" and props["storage"]["format"] == "resource-s3"
+    assert props["pipeline"]["enum"] == list(run_rissk.PIPELINES)
+    assert props["ref"]["default"] == "kedro_pipeline" and props["repo"]["default"] == "RowSquared/rissk"

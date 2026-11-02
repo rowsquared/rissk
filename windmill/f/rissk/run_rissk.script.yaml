@@ -1,0 +1,50 @@
+summary: Run the RISSK pipeline for one survey
+description: |
+  Fetches the rissk repository at `ref` from GitHub, writes a Kedro env from the `survey`
+  resource (type rissk_survey), maps the `storage` resource (type s3) to AWS env vars and
+  runs rissk.run.run_survey. Fails when any questionnaire failed; results land under
+  <output_root>/<survey>/latest/.
+kind: script
+schema:
+  $schema: 'https://json-schema.org/draft/2020-12/schema'
+  type: object
+  order:
+    - survey
+    - storage
+    - pipeline
+    - repo
+    - ref
+    - github_token_variable
+  properties:
+    survey:
+      type: object
+      format: resource-rissk_survey
+      description: The survey to run (resource of type rissk_survey).
+    storage:
+      type: object
+      format: resource-s3
+      description: Bucket credentials (resource of type s3), e.g. f/rissk/s3.
+    pipeline:
+      type: string
+      default: __default__
+      enum:
+        - __default__
+        - data_ingestion
+        - feature_creation
+        - rissk_scoring
+      description: Which stage to run; __default__ runs all three.
+    repo:
+      type: string
+      default: RowSquared/rissk
+      description: GitHub repository owner/name.
+    ref:
+      type: string
+      default: kedro_pipeline
+      description: Branch, tag or commit SHA of the repository to run.
+    github_token_variable:
+      type: string
+      default: ''
+      description: Path of a secret variable holding a GitHub token; needed for a private repo only.
+  required:
+    - survey
+    - storage
