@@ -11,7 +11,7 @@ name: Deploy the Windmill runner
 
 on:
   push:
-    branches: [kedro_pipeline, windmill-runner]   # drop windmill-runner once it is merged
+    branches: [kedro_pipeline]   # one deploying branch per workspace: the last push would win otherwise
     paths:
       - "windmill/**"
       - ".github/workflows/windmill-sync.yml"

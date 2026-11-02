@@ -103,8 +103,7 @@ harmless (the section would hardcode the instance URL in the repository).
 ### 2. GitHub Actions doing the same push (Community Edition): the intended way
 
 [`.github/workflows/windmill-sync.yml`](../.github/workflows/windmill-sync.yml) runs the
-two commands above on every push to `kedro_pipeline` or `windmill-runner` that touches
-`windmill/`, and on demand (Actions → *Deploy the Windmill runner* → *Run workflow*).
+two commands above on every push to `kedro_pipeline` that touches `windmill/`, and on demand (Actions → *Deploy the Windmill runner* → *Run workflow*).
 GitHub is the source of truth and Windmill follows it. One-time setup, in the GitHub
 repository under Settings → Secrets and variables → Actions:
 
@@ -116,9 +115,8 @@ repository under Settings → Secrets and variables → Actions:
 
 The job fails with a clear message while any of the three is missing. Commits whose
 message starts with `[WM]` are skipped: Windmill's own Git sync (way 3) makes those, and
-pushing them back would loop. After the merge, drop `windmill-runner` from the workflow's
-branch list so that only the long-lived branch deploys: two branches deploying to the
-same workspace means the last push wins.
+pushing them back would loop. Only `kedro_pipeline` deploys: two branches deploying to the
+same workspace would mean the last push wins.
 
 ### 3. Windmill's built-in Git sync
 
