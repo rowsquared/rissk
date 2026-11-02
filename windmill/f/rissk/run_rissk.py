@@ -1,0 +1,99 @@
+# py313
+#requirements:
+#kedro==1.2.0
+#kedro-datasets[pandas]>=9.1.0
+#s3fs>=2024.3.1
+#pandas>=2.2.3
+#numpy>=2.1.0
+#pyod>=1.1.5
+#scipy>=1.10
+#scikit-learn>=1.5
+#pyyaml>=6.0
+#pythresh>=0.3.0
+#wmill
+"""Windmill script f/rissk/run_rissk — run the RISSK pipeline for one survey.
+
+Inputs are two Windmill resources: a `rissk_survey` (the survey's configuration) and an
+`s3` (the bucket credentials). The script fetches the rissk repository from GitHub at
+`ref`, writes a throwaway Kedro env from the survey resource into that checkout, exports
+the bucket credentials as the standard AWS environment variables and calls
+`rissk.run.run_survey`. The job fails when any questionnaire failed.
+
+Design: docs/superpowers/specs/2026-10-23-windmill-scheduling-design.md (rissk repo).
+Runs outside Windmill too (`python run_rissk.py --help`), with plain dicts as resources.
+"""
+from __future__ import annotations
+
+import os
+import re
+from typing import TypedDict
+
+PIPELINES: tuple[str, ...] = ("__default__", "data_ingestion", "feature_creation", "rissk_scoring")
+
+
+class rissk_survey(TypedDict, total=False):
+    """Windmill resource type `rissk_survey` (windmill/rissk_survey.schema.json)."""
+
+    survey: str
+    input_root: str
+    output_root: str
+    questionnaires: list[dict]
+    zip_password: str
+    parameters: dict
+
+
+class s3(TypedDict, total=False):
+    """Windmill's built-in resource type `s3`."""
+
+    bucket: str
+    region: str
+    endPoint: str
+    useSSL: bool
+    pathStyle: bool
+    accessKey: str
+    secretKey: str
+
+
+def in_windmill() -> bool:
+    """True when running as a Windmill job (Windmill sets WM_JOB_ID)."""
+    return "WM_JOB_ID" in os.environ
+
+
+def sanitize_env_name(survey: str) -> str:
+    """Kedro env folder name for a survey: anything but [A-Za-z0-9_-] becomes `_`."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", survey.strip())
+
+
+def validate_survey(cfg: dict, in_windmill: bool) -> None:
+    """Reject an incomplete or inconsistent `rissk_survey` resource before any download."""
+    for key in ("survey", "input_root", "output_root"):
+        value = cfg.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"rissk_survey.{key} must be a non-empty string")
+    questionnaires = cfg.get("questionnaires")
+    if not isinstance(questionnaires, list) or not questionnaires:
+        raise ValueError("rissk_survey.questionnaires must be a non-empty list")
+    for i, q in enumerate(questionnaires):
+        if not isinstance(q, dict) or not isinstance(q.get("name"), str) or not q["name"].strip():
+            raise ValueError(f"rissk_survey.questionnaires[{i}].name must be a non-empty string")
+        versions = q.get("VERSION", [])
+        if not isinstance(versions, list) or not all(isinstance(v, int) and not isinstance(v, bool) for v in versions):
+            raise ValueError(f"rissk_survey.questionnaires[{i}].VERSION must be a list of integers")
+        filter_var = q.get("filter_var")
+        if filter_var is not None and not isinstance(filter_var, dict):
+            raise ValueError(f"rissk_survey.questionnaires[{i}].filter_var must be a mapping or null")
+    if in_windmill and "://" not in cfg["output_root"]:
+        raise ValueError(
+            "output_root must be remote (s3://...) when running in Windmill: "
+            "the job folder is deleted after the run"
+        )
+
+
+def validate_run_args(pipeline: str, repo: str, ref: str) -> None:
+    """Reject an unknown pipeline name, a malformed `owner/name` repo, or an empty ref."""
+    if pipeline not in PIPELINES:
+        raise ValueError(f"pipeline must be one of {', '.join(PIPELINES)}; got {pipeline!r}")
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo or ""):
+        raise ValueError(f"repo must be 'owner/name'; got {repo!r}")
+    if not (ref or "").strip():
+        raise ValueError("ref must be a branch, tag or commit SHA")
