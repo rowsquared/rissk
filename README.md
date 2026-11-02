@@ -124,7 +124,7 @@ Results land under `output_root`:
     item_scores.parquet       responsible_scores.csv
 ```
 
-**Scheduling (JupyterHub Notebook Jobs).** [rissk_readme.ipynb](rissk_readme.ipynb) runs the same pipeline **in-process**: set `ENV` (a config name, or a list of them) and `PIPELINE`, and it runs each via `KedroSession`. One job per survey, same notebook, no code changes — there is no driver; pipeline, storage and questionnaire all come from Kedro config.
+**Scheduling (Windmill).** Scheduled runs are Windmill jobs: see [windmill/README.md](windmill/README.md). Survey configuration and credentials live in Windmill resources, not in committed envs. [rissk_readme.ipynb](rissk_readme.ipynb) remains a local, in-process runner: set `ENV` (a config name, or a list of them) and `PIPELINE`, and it runs each via `KedroSession`.
 
 ## Visualising the scores
 
