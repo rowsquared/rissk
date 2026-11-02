@@ -202,3 +202,66 @@ def test_resolve_token_outside_windmill(monkeypatch):
     monkeypatch.delenv("GH_TOKEN_TEST")
     with pytest.raises(ValueError, match="GH_TOKEN_TEST"):
         run_rissk.resolve_token("GH_TOKEN_TEST")
+
+
+# --- Task 5: main, run_pipeline, local CLI ---------------------------------------------
+import json
+import subprocess
+import sys
+
+
+def _fake_fetch(monkeypatch, tmp_path, outcomes):
+    root = tmp_path / "repo" / "RowSquared-rissk-8cb5540"
+    monkeypatch.setattr(run_rissk, "download_tarball", lambda *a, **k: tmp_path / "r.tgz")
+
+    def extract(archive, dest_dir):
+        (root / "conf").mkdir(parents=True)
+        (root / "src/rissk").mkdir(parents=True)
+        return root, "8cb5540"
+
+    monkeypatch.setattr(run_rissk, "extract_tarball", extract)
+    calls = {}
+
+    def run_pipeline(project_root, env, pipeline):
+        calls.update(project_root=project_root, env=env, pipeline=pipeline)
+        return outcomes
+
+    monkeypatch.setattr(run_rissk, "run_pipeline", run_pipeline)
+    applied = {}
+    monkeypatch.setattr(run_rissk, "apply_env", applied.update)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WM_JOB_ID", raising=False)
+    return root, calls, applied
+
+
+STORAGE = {"accessKey": "AK", "secretKey": "SK", "region": "eu-west-1", "endPoint": "s3.amazonaws.com"}
+
+
+def test_main_runs_and_reports(monkeypatch, tmp_path):
+    root, calls, applied = _fake_fetch(monkeypatch, tmp_path, {"slchbs_grenada_2627": "OK", "combine": "OK"})
+    result = run_rissk.main(SURVEY, STORAGE)
+    assert result == {"survey": "grdslchbs", "env": "grdslchbs", "repo": "RowSquared/rissk", "ref": "kedro_pipeline",
+                      "commit": "8cb5540", "pipeline": "__default__",
+                      "outcomes": {"slchbs_grenada_2627": "OK", "combine": "OK"}}
+    assert calls == {"project_root": root, "env": "grdslchbs", "pipeline": "__default__"}
+    assert (root / "conf/grdslchbs/globals.yml").exists()
+    assert applied["AWS_ACCESS_KEY_ID"] == "AK" and applied["KEDRO_DISABLE_TELEMETRY"] == "true"
+    assert applied["KEDRO_LOGGING_CONFIG"] == str(tmp_path / "kedro_logging.yml")
+
+
+def test_main_raises_when_a_questionnaire_failed(monkeypatch, tmp_path):
+    _fake_fetch(monkeypatch, tmp_path, {"q1": "FAILED (ValueError: boom)", "combine": "OK"})
+    with pytest.raises(RuntimeError, match="q1"):
+        run_rissk.main(SURVEY, STORAGE)
+
+
+def test_main_validates_before_fetching(monkeypatch, tmp_path):
+    monkeypatch.setattr(run_rissk, "download_tarball", lambda *a, **k: pytest.fail("fetched"))
+    with pytest.raises(ValueError, match="pipeline"):
+        run_rissk.main(SURVEY, STORAGE, pipeline="nope")
+
+
+def test_cli_help_runs():
+    out = subprocess.run([sys.executable, str(REPO / "windmill/f/rissk/run_rissk.py"), "--help"],
+                         capture_output=True, text=True)
+    assert out.returncode == 0 and "--survey" in out.stdout

@@ -24,9 +24,11 @@ Runs outside Windmill too (`python run_rissk.py --help`), with plain dicts as re
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
+import sys
 import tarfile
 import tomllib
 import urllib.error
@@ -257,3 +259,64 @@ def resolve_token(github_token_variable: str) -> str | None:
         return os.environ[name]
     except KeyError:
         raise ValueError(f"environment variable {name} is not set (github_token_variable)") from None
+
+
+def run_pipeline(project_root: Path, env: str, pipeline: str) -> dict[str, str]:
+    """Run rissk from the checkout: its `src/` goes first on sys.path, then run_survey."""
+    sys.path.insert(0, str(project_root / "src"))
+    from rissk.run import run_survey  # from the checkout, imported only now (after the env is set)
+
+    return run_survey(env, project_root=project_root, pipeline=pipeline)
+
+
+def main(
+    survey: rissk_survey,
+    storage: s3,
+    pipeline: str = "__default__",
+    repo: str = "RowSquared/rissk",
+    ref: str = "kedro_pipeline",
+    github_token_variable: str = "",
+) -> dict:
+    """Run rissk for one survey. Fails the job when any questionnaire failed."""
+    validate_run_args(pipeline, repo, ref)
+    validate_survey(survey, in_windmill())
+    token = resolve_token(github_token_variable)
+
+    job_dir = Path.cwd()
+    print(f"fetching {repo}@{ref}", flush=True)
+    archive = download_tarball(repo, ref, token, job_dir / "repo.tar.gz")
+    root, commit = extract_tarball(archive, job_dir / "repo")
+    env = materialize_env(root, survey)
+    print(f"project root {root} (commit {commit}), env {env}, pipeline {pipeline}", flush=True)
+
+    apply_env({**aws_env_from_s3(storage), **kedro_env(write_logging_config(job_dir))})
+    outcomes = run_pipeline(root, env, pipeline)
+
+    for label, outcome in outcomes.items():
+        print(f"{label}: {outcome}", flush=True)
+    result = {"survey": survey["survey"], "env": env, "repo": repo, "ref": ref, "commit": commit,
+              "pipeline": pipeline, "outcomes": dict(outcomes)}
+    failed = [label for label, outcome in outcomes.items() if outcome != "OK"]
+    if failed:
+        raise RuntimeError(f"rissk run failed for: {failed}")
+    return result
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run rissk for one survey outside Windmill.")
+    parser.add_argument("--survey", required=True, help="JSON file with the rissk_survey resource content")
+    parser.add_argument("--storage", required=True, help="JSON file with the s3 resource content")
+    parser.add_argument("--pipeline", default="__default__", choices=PIPELINES)
+    parser.add_argument("--repo", default="RowSquared/rissk")
+    parser.add_argument("--ref", default="kedro_pipeline")
+    parser.add_argument("--github-token-variable", default="",
+                        help="name of an environment variable holding a GitHub token (private repos)")
+    args = parser.parse_args()
+    with open(args.survey, encoding="utf-8") as fh:
+        survey_cfg = json.load(fh)
+    with open(args.storage, encoding="utf-8") as fh:
+        storage_cfg = json.load(fh)
+    print(json.dumps(main(survey_cfg, storage_cfg, args.pipeline, args.repo, args.ref,
+                          args.github_token_variable), indent=2))
