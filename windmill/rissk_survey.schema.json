@@ -18,6 +18,6 @@
             "description": "Optional paradata filter, e.g. {\"consent_q\": \"1\"}"}}}},
     "zip_password": {"type": "string", "description": "Optional password of the export zips"},
     "parameters": {"type": "object",
-      "description": "Optional extra keys merged into conf/<env>/parameters.yml (e.g. feature overrides)"}
+      "description": "Optional top-level keys of parameters.yml, deep-merged over conf/base/parameters.yml; e.g. {\"features\": {\"gps\": {\"use\": false}}} disables one feature and keeps the rest"}
   }
 }

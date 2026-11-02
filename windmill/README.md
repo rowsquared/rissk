@@ -53,15 +53,21 @@ Create a resource of type `rissk_survey` at `f/rissk/survey_<survey>`. For grdsl
   "input_root": "s3://surveytool",
   "output_root": "s3://surveytool",
   "questionnaires": [
-    {"name": "slchbs_grenada_2627", "VERSION": [10, 11, 12, 13], "filter_var": null}
+    {"name": "slchbs_grenada_2627", "VERSION": [10, 11, 12, 13], "filter_var": {"intrv_result": "1"}}
   ]
 }
 ```
 
 `survey` is the folder under both roots; each questionnaire is a `<name>_*.zip` family under
-`<input_root>/<survey>/latest/10_RAW/`; `VERSION: []` means every version found; optional
-`zip_password` and `parameters` (extra keys for `conf/<env>/parameters.yml`, e.g. feature
-overrides) exist too. Output layout is the questionnaire-subfolder one
+`<input_root>/<survey>/latest/10_RAW/`; `VERSION: []` means every version found;
+`filter_var` scores only the interviews whose paradata answer matches (grdslchbs and
+svgslchbs use `{"intrv_result": "1"}`). Optional: `zip_password`, and `parameters`, whose
+top-level keys are deep-merged over `conf/base/parameters.yml`, so
+`{"features": {"gps": {"use": false}}}` disables GPS and keeps every other feature.
+
+**Migrating a survey that has a committed `conf/<survey>/` env:** copy the roots from its
+`globals.yml` and each `questionnaires/*.yml` (name, VERSION, filter_var) into the resource
+verbatim; a dropped `filter_var` changes the scored population. Output layout is the questionnaire-subfolder one
 (`35_SCORES/<name>/unit_rissk_scores.csv`, plus the survey-level
 `30_PROCESSED/microdata.parquet` union).
 

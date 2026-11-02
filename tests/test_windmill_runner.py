@@ -297,3 +297,32 @@ def test_schema_and_metadata_are_consistent():
     assert props["survey"]["format"] == "resource-rissk_survey" and props["storage"]["format"] == "resource-s3"
     assert props["pipeline"]["enum"] == list(run_rissk.PIPELINES)
     assert props["ref"]["default"] == "kedro_pipeline" and props["repo"]["default"] == "RowSquared/rissk"
+
+
+# --- Review fixes ----------------------------------------------------------------------
+def test_materialize_env_deep_merges_parameters_over_base(tmp_path):
+    # Kedro's default env merge is destructive at the top level, so a partial `features`
+    # override must be merged over conf/base/parameters.yml before it is written.
+    base = tmp_path / "conf/base"
+    base.mkdir(parents=True)
+    (base / "parameters.yml").write_text(yaml.safe_dump({
+        "zip_password": None,
+        "features": {"gps": {"use": True, "parameters": {"contamination": 0.1}},
+                     "answer_changed": {"use": True}},
+    }))
+    run_rissk.materialize_env(tmp_path, {**SURVEY, "parameters": {"features": {"gps": {"use": False}}}})
+    p = yaml.safe_load((tmp_path / "conf/grdslchbs/parameters.yml").read_text())
+    assert set(p) == {"features"}
+    assert p["features"]["answer_changed"] == {"use": True}
+    assert p["features"]["gps"] == {"use": False, "parameters": {"contamination": 0.1}}
+
+
+def test_readme_survey_example_matches_committed_env():
+    # The operator copies the README example to create the production resource, so its
+    # questionnaire must equal the committed env (name, VERSION, filter_var).
+    readme = (REPO / "windmill/README.md").read_text()
+    block = re.search(r"```json\n(\{.*?\n\})\n```", readme, re.S).group(1)
+    example = json.loads(block)["questionnaires"][0]
+    committed = yaml.safe_load((REPO / "conf/grdslchbs/questionnaires/slchbs_grenada_2627.yml").read_text())
+    assert example == {"name": committed["name"], "VERSION": committed["VERSION"],
+                       "filter_var": committed["filter_var"]}

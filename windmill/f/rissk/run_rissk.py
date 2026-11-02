@@ -113,7 +113,8 @@ def materialize_env(project_root: Path, cfg: dict) -> str:
     """Write the Kedro env `conf/<env>/` that mirrors a `rissk_survey` resource.
 
     globals.yml (roots + survey), one questionnaires/<name>.yml per questionnaire, and
-    parameters.yml only when a zip password or parameter overrides are given. A committed
+    parameters.yml only when a zip password or parameter overrides are given (overrides are
+    deep-merged over conf/base/parameters.yml, key by key). A committed
     env of the same name in the checkout is replaced, with a warning, so the resource is
     always what runs. Returns the env name.
     """
@@ -142,10 +143,28 @@ def materialize_env(project_root: Path, cfg: dict) -> str:
     parameters = {}
     if cfg.get("zip_password"):
         parameters["zip_password"] = cfg["zip_password"]
-    parameters.update(cfg.get("parameters") or {})
+    overrides = cfg.get("parameters") or {}
+    if overrides:
+        # Kedro's default env merge replaces a top-level key wholesale, so a partial
+        # override (e.g. {"features": {"gps": {"use": false}}}) is merged over the base
+        # value of that key here; only the overridden keys are written.
+        base_path = project_root / "conf" / "base" / "parameters.yml"
+        base = (yaml.safe_load(base_path.read_text(encoding="utf-8")) or {}) if base_path.exists() else {}
+        for key, value in overrides.items():
+            parameters[key] = _deep_merge(base.get(key), value)
     if parameters:
         dump(env_dir / "parameters.yml", parameters)
     return env
+
+
+def _deep_merge(base, override):
+    """`override` wins; nested mappings are merged key by key instead of replaced."""
+    if isinstance(base, dict) and isinstance(override, dict):
+        merged = dict(base)
+        for key, value in override.items():
+            merged[key] = _deep_merge(base.get(key), value)
+        return merged
+    return override
 
 
 def aws_env_from_s3(storage: dict) -> dict[str, str]:

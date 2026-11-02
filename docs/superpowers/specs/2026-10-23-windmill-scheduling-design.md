@@ -96,7 +96,7 @@ once in Windmill.
             "description": "Optional paradata filter, e.g. {\"consent_q\": \"1\"}"}}}},
     "zip_password": {"type": "string", "description": "Optional password of the export zips"},
     "parameters": {"type": "object",
-      "description": "Optional extra keys merged into conf/<env>/parameters.yml (e.g. feature overrides)"}
+      "description": "Optional top-level keys of parameters.yml, deep-merged over conf/base/parameters.yml (e.g. {\"features\": {\"gps\": {\"use\": false}}} disables one feature)"}
   }
 }
 ```
@@ -131,6 +131,11 @@ After the repo is extracted (section 3) the runner **materialises** an env:
 - Layout is always the **questionnaires-folder** form (per-`<qnr>` output subfolders +
   survey-level `microdata.parquet` union), which is what `grdslchbs` and `wbalkans`
   already use. The legacy flat single-questionnaire layout is not reproduced.
+- `parameters` overrides are **deep-merged over `conf/base/parameters.yml`** key by key before
+  being written (only the overridden top-level keys are written). Kedro's default env merge
+  (`merge_strategy` unset in `settings.py`) replaces a top-level key wholesale, so writing
+  `{features: {gps: {use: false}}}` verbatim would drop every other feature and the job
+  would end OK with hollow scores. (Added after review, 2026-11-02.)
 - Validation happens **before any download**: non-empty `survey`, roots and
   `questionnaires`; each questionnaire has a `name`; `VERSION` is a list of ints;
   `pipeline` ∈ {`__default__`, `data_ingestion`, `feature_creation`, `rissk_scoring`};
@@ -255,8 +260,10 @@ edit the resource. No git, no redeploy.
 
 - Resource `f/rissk/survey_windmill_smoke`: `survey: grdslchbs`, `input_root:
   s3://surveytool`, `output_root: s3://surveytool/windmill_smoke`, questionnaire
-  `slchbs_grenada_2627` versions `[10, 11, 12, 13]`. Same inputs as production, outputs
-  isolated under the `windmill_smoke/` prefix.
+  `slchbs_grenada_2627` versions `[10, 11, 12, 13]` with `filter_var: {intrv_result: "1"}`,
+  copied verbatim from the committed `conf/grdslchbs/` env (a dropped `filter_var` changes
+  the scored population and the row-count comparison below). Same inputs as production,
+  outputs isolated under the `windmill_smoke/` prefix.
 - Run it manually with `pipeline=data_ingestion`, check
   `s3://surveytool/windmill_smoke/grdslchbs/latest/30_PROCESSED/slchbs_grenada_2627/`,
   then run the full pipeline and compare `35_SCORES/slchbs_grenada_2627/unit_rissk_scores.csv`
