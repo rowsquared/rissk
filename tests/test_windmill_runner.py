@@ -121,3 +121,84 @@ def test_logging_config_is_plain_console(tmp_path):
     assert cfg["loggers"]["kedro"]["level"] == "INFO" and cfg["loggers"]["rissk"]["level"] == "INFO"
     assert run_rissk.kedro_env(path) == {"KEDRO_DISABLE_TELEMETRY": "true", "DO_NOT_TRACK": "1",
                                          "KEDRO_LOGGING_CONFIG": str(path)}
+
+
+# --- Task 4: fetch the repository tarball ----------------------------------------------
+import io
+import tarfile
+import urllib.error
+
+
+def _tarball(top: str, pyproject: str) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, text in {f"{top}/pyproject.toml": pyproject, f"{top}/src/rissk/__init__.py": ""}.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+KEDRO_PYPROJECT = '[tool.kedro]\npackage_name = "rissk"\nsource_dir = "src"\n'
+
+
+def test_download_tarball_builds_request(tmp_path):
+    seen = {}
+
+    def opener(req):
+        seen["url"] = req.full_url
+        seen["headers"] = {k.lower(): v for k, v in req.header_items()}
+        return io.BytesIO(b"bytes")
+
+    out = run_rissk.download_tarball("RowSquared/rissk", "kedro_pipeline", "tok", tmp_path / "r.tgz", opener=opener)
+    assert out.read_bytes() == b"bytes"
+    assert seen["url"] == "https://api.github.com/repos/RowSquared/rissk/tarball/kedro_pipeline"
+    assert seen["headers"]["authorization"] == "Bearer tok"
+    assert seen["headers"]["accept"] == "application/vnd.github+json"
+    assert seen["headers"]["x-github-api-version"] == "2022-11-28"
+
+
+def test_download_tarball_without_token_sends_no_authorization(tmp_path):
+    seen = {}
+
+    def opener(req):
+        seen["headers"] = {k.lower() for k, _ in req.header_items()}
+        return io.BytesIO(b"x")
+
+    run_rissk.download_tarball("RowSquared/rissk", "main", None, tmp_path / "r.tgz", opener=opener)
+    assert "authorization" not in seen["headers"]
+
+
+@pytest.mark.parametrize("code, msg", [(404, "not found"), (401, "token rejected"), (403, "forbidden")])
+def test_download_tarball_translates_http_errors(tmp_path, code, msg):
+    def opener(req):
+        raise urllib.error.HTTPError(req.full_url, code, "x", {}, None)
+
+    with pytest.raises(RuntimeError, match=msg):
+        run_rissk.download_tarball("RowSquared/private", "main", None, tmp_path / "r.tgz", opener=opener)
+
+
+def test_extract_tarball_returns_root_and_commit(tmp_path):
+    archive = tmp_path / "r.tgz"
+    archive.write_bytes(_tarball("RowSquared-rissk-8cb5540", KEDRO_PYPROJECT))
+    root, commit = run_rissk.extract_tarball(archive, tmp_path / "repo")
+    assert root == tmp_path / "repo" / "RowSquared-rissk-8cb5540" and commit == "8cb5540"
+    assert (root / "src/rissk/__init__.py").exists()
+
+
+def test_extract_tarball_rejects_non_kedro_project(tmp_path):
+    archive = tmp_path / "r.tgz"
+    archive.write_bytes(_tarball("Owner-repo-abc1234", "[project]\nname='x'\n"))
+    with pytest.raises(RuntimeError, match="tool.kedro"):
+        run_rissk.extract_tarball(archive, tmp_path / "repo")
+
+
+def test_resolve_token_outside_windmill(monkeypatch):
+    monkeypatch.delenv("WM_JOB_ID", raising=False)
+    assert run_rissk.resolve_token("") is None
+    monkeypatch.setenv("GH_TOKEN_TEST", "abc")
+    assert run_rissk.resolve_token("GH_TOKEN_TEST") == "abc"
+    monkeypatch.delenv("GH_TOKEN_TEST")
+    with pytest.raises(ValueError, match="GH_TOKEN_TEST"):
+        run_rissk.resolve_token("GH_TOKEN_TEST")

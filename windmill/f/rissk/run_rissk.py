@@ -27,6 +27,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import tarfile
+import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import TypedDict
 
@@ -188,3 +192,68 @@ def kedro_env(logging_config: Path) -> dict[str, str]:
 def apply_env(mapping: dict[str, str]) -> None:
     """The one place the runner touches the process environment."""
     os.environ.update(mapping)
+
+
+def tarball_url(repo: str, ref: str) -> str:
+    """GitHub's tarball endpoint; `ref` is a branch, tag or commit SHA."""
+    return f"https://api.github.com/repos/{repo}/tarball/{ref}"
+
+
+def download_tarball(repo: str, ref: str, token: str | None, dest: Path,
+                     opener=urllib.request.urlopen) -> Path:
+    """Stream the repository tarball at `ref` to `dest`; a token is sent only when given."""
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "rissk-windmill-runner",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(tarball_url(repo, ref), headers=headers)
+    try:
+        with opener(request) as response, open(dest, "wb") as fh:
+            shutil.copyfileobj(response, fh)
+    except urllib.error.HTTPError as exc:
+        reasons = {
+            404: "repo or ref not found, or the token cannot read it",
+            401: "token rejected by GitHub",
+            403: "forbidden or rate-limited by GitHub",
+        }
+        raise RuntimeError(f"GitHub {exc.code} for {repo}@{ref}: {reasons.get(exc.code, exc.reason)}") from exc
+    return dest
+
+
+def extract_tarball(archive: Path, dest_dir: Path) -> tuple[Path, str]:
+    """Extract the tarball; return the project root (its single top folder) and the commit.
+
+    The top folder is named `<owner>-<repo>-<sha7>` by GitHub whatever kind of ref was
+    requested. The tree must be a Kedro project (`[tool.kedro]` in pyproject.toml).
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive) as tar:
+        tar.extractall(dest_dir, filter="data")
+    tops = [p for p in dest_dir.iterdir() if p.is_dir()]
+    if len(tops) != 1:
+        raise RuntimeError(f"expected one top-level folder in the tarball, found {len(tops)}")
+    root = tops[0]
+    pyproject = root / "pyproject.toml"
+    tool = tomllib.loads(pyproject.read_text(encoding="utf-8")).get("tool", {}) if pyproject.exists() else {}
+    if "kedro" not in tool:
+        raise RuntimeError(f"{root.name} is not a Kedro project: no [tool.kedro] in pyproject.toml")
+    return root, root.name.rsplit("-", 1)[-1]
+
+
+def resolve_token(github_token_variable: str) -> str | None:
+    """A GitHub token, or None. Inside Windmill the argument is a variable path; outside
+    it is the name of an environment variable."""
+    name = (github_token_variable or "").strip()
+    if not name:
+        return None
+    if in_windmill():
+        import wmill  # only available inside a Windmill job
+
+        return wmill.get_variable(name)
+    try:
+        return os.environ[name]
+    except KeyError:
+        raise ValueError(f"environment variable {name} is not set (github_token_variable)") from None
