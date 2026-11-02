@@ -326,3 +326,47 @@ def test_readme_survey_example_matches_committed_env():
     committed = yaml.safe_load((REPO / "conf/grdslchbs/questionnaires/slchbs_grenada_2627.yml").read_text())
     assert example == {"name": committed["name"], "VERSION": committed["VERSION"],
                        "filter_var": committed["filter_var"]}
+
+
+# --- Deployment: CLI sync root, resource type file, GitHub Actions workflow ------------
+def test_resource_type_file_matches_schema_json():
+    # The CLI/CI path pushes rissk_survey.resource-type.yaml; the manual path pastes the
+    # JSON. They must describe the same type.
+    rt = yaml.safe_load((REPO / "windmill/rissk_survey.resource-type.yaml").read_text())
+    schema = json.loads((REPO / "windmill/rissk_survey.schema.json").read_text())
+    assert rt["schema"] == schema
+    assert rt["description"]
+
+
+def test_sync_root_is_scoped_to_this_repo_and_never_touches_config():
+    # A `wmill sync push` deletes remote items that are in scope but missing locally, and
+    # the workspace also holds hand-made items and the ppp repository's. Keep the scope to
+    # f/rissk and keep variables, resources, secrets, folders and resource types out.
+    conf = yaml.safe_load((REPO / "windmill/wmill.yaml").read_text())
+    assert conf["includes"] == ["f/rissk/**"]
+    for key in ("skipVariables", "skipResources", "skipSecrets", "skipFolders", "skipResourceTypes"):
+        assert conf.get(key) is True, key
+    assert not conf.get("includeSchedules") and not conf.get("includeTriggers")
+
+
+def test_deploy_workflow_pushes_the_same_scope():
+    wf_path = REPO / ".github/workflows/windmill-sync.yml"
+    wf = yaml.safe_load(wf_path.read_text())
+    on = wf[True] if True in wf else wf["on"]  # PyYAML reads the `on:` key as boolean True
+    assert "windmill/**" in on["push"]["paths"] and "workflow_dispatch" in on
+    job = wf["jobs"]["sync"]
+    assert job["defaults"]["run"]["working-directory"] == "windmill"
+    runs = [s.get("run", "") for s in job["steps"]]
+    rt_push = next(r for r in runs if r.startswith("wmill resource-type push"))
+    assert "rissk_survey.resource-type.yaml rissk_survey" in rt_push
+    sync_push = next(r for r in runs if r.startswith("wmill sync push"))
+    for flag in ("--yes", "--skip-variables", "--skip-secrets", "--skip-resources",
+                 "--skip-resource-types", "--skip-folders"):
+        assert flag in sync_push, flag
+    for cmd in (rt_push, sync_push):
+        assert '--workspace "$WMILL_WORKSPACE"' in cmd and '--token "$WMILL_TOKEN"' in cmd \
+            and '--base-url "$WMILL_URL"' in cmd
+    # The secret and the variables are read from the repository settings, never hardcoded.
+    assert job["env"]["WMILL_TOKEN"] == "${{ secrets.WMILL_TOKEN }}"
+    assert job["env"]["WMILL_URL"] == "${{ vars.WMILL_URL }}"
+    assert job["env"]["WMILL_WORKSPACE"] == "${{ vars.WMILL_WORKSPACE }}"

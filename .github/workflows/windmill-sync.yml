@@ -1,0 +1,75 @@
+# Deploys the Windmill runner (windmill/f/rissk/run_rissk) and the rissk_survey resource
+# type to the Windmill workspace with the wmill CLI, so GitHub is the source of truth and
+# Windmill follows it. Setup and the two other ways to deploy: windmill/README.md,
+# "Deploying the runner".
+#
+# Needs, under Settings → Secrets and variables → Actions:
+#   secret   WMILL_TOKEN      a Windmill user token (Account settings → Tokens)
+#   variable WMILL_URL        the instance URL, e.g. https://windmill.example.org/
+#   variable WMILL_WORKSPACE  the workspace id
+name: Deploy the Windmill runner
+
+on:
+  push:
+    branches: [kedro_pipeline, windmill-runner]   # drop windmill-runner once it is merged
+    paths:
+      - "windmill/**"
+      - ".github/workflows/windmill-sync.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: windmill-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: wmill sync push
+    runs-on: ubuntu-latest
+    # Commits made by Windmill's own Git sync start with "[WM]"; pushing them back would loop.
+    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, '[WM]')
+    env:
+      WMILL_URL: ${{ vars.WMILL_URL }}
+      WMILL_WORKSPACE: ${{ vars.WMILL_WORKSPACE }}
+      WMILL_TOKEN: ${{ secrets.WMILL_TOKEN }}
+    defaults:
+      run:
+        working-directory: windmill
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the Windmill settings
+        run: |
+          for name in WMILL_URL WMILL_WORKSPACE WMILL_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set. Add the repository variables WMILL_URL and WMILL_WORKSPACE and the secret WMILL_TOKEN (Settings → Secrets and variables → Actions)."
+              exit 1
+            fi
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install the Windmill CLI
+        run: npm install -g windmill-cli@1.856.0
+
+      # Resource types are workspace-wide and are not part of the sync scope (wmill.yaml),
+      # so the one this script needs is pushed on its own: created or updated, never deleted.
+      - name: Push the rissk_survey resource type
+        run: >-
+          wmill resource-type push rissk_survey.resource-type.yaml rissk_survey
+          --workspace "$WMILL_WORKSPACE" --token "$WMILL_TOKEN" --base-url "$WMILL_URL"
+
+      # Scope: f/rissk/** only (wmill.yaml); the --skip flags repeat the file's settings so a
+      # local edit of wmill.yaml cannot widen what CI touches. Windmill computes the script's
+      # lockfile after the push (dependency job) from the #requirements: header.
+      - name: Push f/rissk
+        run: >-
+          wmill sync push --yes
+          --skip-variables --skip-secrets --skip-resources --skip-resource-types --skip-folders
+          --skip-branch-validation
+          --workspace "$WMILL_WORKSPACE" --token "$WMILL_TOKEN" --base-url "$WMILL_URL"
+          --message "${{ github.repository }}@${{ github.sha }}"

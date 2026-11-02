@@ -11,20 +11,21 @@ Survey configuration and credentials live in Windmill, not in committed `conf/<e
 
 | Piece | Windmill path | Source in this repo |
 |---|---|---|
-| Script | `f/rissk/run_rissk` (Python 3.13, default worker tag, runs on `windmill-worker-1`) | `f/rissk/run_rissk.py`, metadata `f/rissk/run_rissk.script.yaml` |
-| Resource type | `rissk_survey` | `rissk_survey.schema.json` |
+| Script | `f/rissk/run_rissk` (Python 3.13, default worker tag, runs on `windmill-worker-1`) | `f/rissk/run_rissk.py`, settings in `f/rissk/run_rissk.script.yaml` |
+| Resource type | `rissk_survey` | `rissk_survey.resource-type.yaml` (CLI and CI), `rissk_survey.schema.json` (same schema, to paste) |
 | Survey resources | `f/rissk/survey_<survey>`, one per survey | filled from the schema (example below) |
 | Bucket credentials | `f/rissk/s3`, built-in type `s3`, fields referencing the shared variables | — |
 | Shared variables | `f/shared/aws_access_key_id`, `f/shared/aws_secret_access_key` (secret), `f/shared/aws_default_region` | — |
 | Private-repo token | `f/rissk/github_token` (secret), only when the code repository is private | — |
-| CLI sync root | `wmill.yaml` (`wmill sync push` from this folder, optional) | — |
+| Deployment | the script and the resource type, from this folder (see [Deploying the runner](#deploying-the-runner)) | `wmill.yaml` (sync root), [`../.github/workflows/windmill-sync.yml`](../.github/workflows/windmill-sync.yml) |
 
 The job folder is scratch: zips are staged and unzipped there and it is deleted when the job
 ends. Durable state is the bucket, keyed by survey: `<output_root>/<survey>/latest/`.
 
 ## One-time setup (Windmill UI)
 
-1. **Folders.** Create the folders `rissk` and `shared` (Folders page).
+1. **Folders.** Create the folders `rissk` and `shared` (Folders page). A deployment never
+   creates or changes folders.
 2. **Shared variables.** Variables → New: `f/shared/aws_access_key_id`,
    `f/shared/aws_secret_access_key` (tick *secret*), `f/shared/aws_default_region`
    (e.g. `eu-west-1`).
@@ -32,16 +33,104 @@ ends. Durable state is the bucket, keyed by survey: `<output_root>/<survey>/late
    `accessKey` = `$var:f/shared/aws_access_key_id`, `secretKey` =
    `$var:f/shared/aws_secret_access_key`, `region` = `$var:f/shared/aws_default_region`,
    `endPoint` = `s3.amazonaws.com`, `useSSL` = true, `bucket` = `surveytool` (informational).
-4. **Resource type.** Resources → Resource types → *Add a resource type*: name
+4. **Resource type and script.** Deploy them with one of the ways in
+   [Deploying the runner](#deploying-the-runner); the GitHub Actions one is the intended
+   one. To do it by hand instead: Resources → Resource types → *Add a resource type*, name
    `rissk_survey`, switch the editor to *As JSON* and paste
-   [`rissk_survey.schema.json`](rissk_survey.schema.json).
-5. **Script.** Scripts → New → Python, path `f/rissk/run_rissk`, paste
-   [`f/rissk/run_rissk.py`](f/rissk/run_rissk.py) whole (the `# py313` and `#requirements:`
-   header lines included), summary "Run the RISSK pipeline for one survey". Deploy. Open the
-   script's lockfile: it must show Python 3.13 and `kedro==1.2.0`. If the Python version is
-   wrong, make sure `# py313` is the very first line and re-save.
-6. **Timeout.** Script → Settings → Runtime → custom timeout: about twice the longest known
-   run for a survey. Also check Instance settings for the default job timeout.
+   [`rissk_survey.schema.json`](rissk_survey.schema.json); then Scripts → New → Python,
+   path `f/rissk/run_rissk`, paste [`f/rissk/run_rissk.py`](f/rissk/run_rissk.py) whole
+   (the `# py313` and `#requirements:` header lines included), summary "Run the RISSK
+   pipeline for one survey", Deploy.
+5. **Check the lockfile.** Either way, open the script's page: its lockfile must show
+   Python 3.13 and `kedro==1.2.0`. If the Python version is wrong, make sure `# py313` is
+   the very first line and deploy again.
+6. **Timeout.** The job timeout is the `timeout` key (seconds) of
+   [`f/rissk/run_rissk.script.yaml`](f/rissk/run_rissk.script.yaml): set it to about twice
+   the longest known run for a survey and deploy. Unset, the instance default applies
+   (Instance settings → job timeout). Do not set it in the UI when the script is deployed
+   with the CLI or CI: a push resets every setting that is not in the yaml.
+
+## Deploying the runner
+
+Two different things get deployed. The **runner** (`f/rissk/run_rissk` and the
+`rissk_survey` type) is deployed to Windmill by one of the three ways below. The **rissk
+code it runs** is fetched from GitHub at `ref` on every job and is never deployed. With
+way 2 in place a push to the branch updates both, and nothing is ever pasted.
+
+This folder is in the Windmill CLI layout: `wmill.yaml` is the sync root, the script is
+`f/rissk/run_rissk.py` plus `f/rissk/run_rissk.script.yaml` (summary, description,
+argument schema, timeout: the whole script definition), the type is
+`rissk_survey.resource-type.yaml`. The scope of a push is deliberately narrow (see
+`wmill.yaml`): only `f/rissk/**`, and never variables, resources, secrets or folders. The
+reason is that `wmill sync push` also **deletes** remote items that are in scope but
+missing locally, and the workspace holds hand-made items (survey resources, credentials,
+folders) and the ppp repository's. Resource types are workspace-wide, not under a folder,
+and ignore that scope; so the sync skips them and `rissk_survey` is pushed on its own with
+`wmill resource-type push`, which creates or updates and never deletes.
+`tests/test_windmill_runner.py` fails if the scope or the workflow drifts from this.
+
+### 1. `wmill sync push` from your machine (Community Edition)
+
+Once per machine: install the CLI (Node 20 or newer) and register the workspace. The
+workspace id is shown in Windmill's workspace switcher; the command then asks you to log
+in through the browser or with a token (your username → Account settings → Tokens).
+
+```bash
+npm install -g windmill-cli@1.856.0
+```
+
+```bash
+wmill workspace add rissk <workspace_id> https://<windmill-host>/
+```
+
+Then, from the repository root, after every change (the first command only shows what
+would change):
+
+```bash
+cd windmill && wmill sync push --dry-run
+```
+
+```bash
+cd windmill && wmill resource-type push rissk_survey.resource-type.yaml rissk_survey && wmill sync push --yes
+```
+
+The push creates or updates `f/rissk/run_rissk` with the metadata yaml as summary, schema
+and settings. Windmill then computes the lockfile (a dependency job, visible on the
+script's page) from the `#requirements:` header, exactly as when the script is saved in
+the UI. The CLI warns that a `workspaces` section is recommended in `wmill.yaml`; that is
+harmless (the section would hardcode the instance URL in the repository).
+
+### 2. GitHub Actions doing the same push (Community Edition): the intended way
+
+[`.github/workflows/windmill-sync.yml`](../.github/workflows/windmill-sync.yml) runs the
+two commands above on every push to `kedro_pipeline` or `windmill-runner` that touches
+`windmill/`, and on demand (Actions → *Deploy the Windmill runner* → *Run workflow*).
+GitHub is the source of truth and Windmill follows it. One-time setup, in the GitHub
+repository under Settings → Secrets and variables → Actions:
+
+| Kind | Name | Value |
+|---|---|---|
+| Secret | `WMILL_TOKEN` | a Windmill user token (your username → Account settings → Tokens). An unscoped token is simplest; a scoped one needs `users:read` plus read and write on what the push touches, scripts and resource types ([User tokens](https://www.windmill.dev/docs/core_concepts/user_tokens)). |
+| Variable | `WMILL_URL` | the instance URL, e.g. `https://windmill.example.org/` |
+| Variable | `WMILL_WORKSPACE` | the workspace id |
+
+The job fails with a clear message while any of the three is missing. Commits whose
+message starts with `[WM]` are skipped: Windmill's own Git sync (way 3) makes those, and
+pushing them back would loop. After the merge, drop `windmill-runner` from the workflow's
+branch list so that only the long-lived branch deploys: two branches deploying to the
+same workspace means the last push wins.
+
+### 3. Windmill's built-in Git sync
+
+Windmill can commit every deployment made in its UI to a Git repository (Workspace
+settings → Git sync, with a `git_repository` resource). On Community Edition this is
+available for workspaces with up to two users. It is the *opposite* direction, Windmill →
+Git. The automatic Git → Windmill deployment ("Automatically deploy changes from Git") is
+Enterprise-only, so on this edition "Windmill follows GitHub" is way 2, and Windmill's
+docs advise enabling either the CI action or the automatic sync, not both. Git sync is
+not enabled for this repository: edits made in the UI would be committed back into
+`windmill/` and compete with the code reviewed here. For a record of UI edits anyway,
+point Git sync at a separate repository or branch.
 
 ## Adding a survey
 
@@ -117,8 +206,14 @@ Windmill variable.
 
 - **Code:** runs fetch the branch named by `ref` (default `kedro_pipeline`) at run time, so a
   push is live on the next run. Pin `ref` to a tag or commit on a schedule for reproducibility.
-- **Dependencies:** when `[project].dependencies` in `pyproject.toml` changes, update the
-  `#requirements:` header in `f/rissk/run_rissk.py` and re-save the script in Windmill so it
-  re-locks. `tests/test_windmill_runner.py::test_requirements_header_matches_pyproject` fails
-  until the header matches.
+- **Runner and its dependencies:** edit `f/rissk/run_rissk.py` (when
+  `[project].dependencies` in `pyproject.toml` changes, the `#requirements:` header with
+  it; `tests/test_windmill_runner.py::test_requirements_header_matches_pyproject` fails
+  until the header matches) and push: way 2 deploys it and Windmill re-locks. Pinning the
+  lock is optional: after a deployment, `cd windmill && wmill sync pull --yes` writes
+  `f/rissk/run_rissk.script.lock` and a `lock:` line in the metadata yaml; commit both and
+  later pushes reuse exactly those package versions. A pinned lock is **not** recomputed
+  when the header changes: delete the lock file in the same commit, push, pull it again.
+- **Settings:** the timeout and the argument schema are in `f/rissk/run_rissk.script.yaml`;
+  edit and push.
 - **Survey configuration:** edit the resource. No redeploy.

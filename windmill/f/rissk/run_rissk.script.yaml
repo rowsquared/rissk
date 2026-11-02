@@ -1,3 +1,7 @@
+# Settings of f/rissk/run_rissk. This file is the whole script definition: a push
+# (`wmill sync push`, by hand or from CI) resets any setting that is not in it, so the job
+# timeout belongs here, not in the UI. Unset, the instance default applies.
+# timeout: <seconds>   # about twice the longest known run for a survey
 summary: Run the RISSK pipeline for one survey
 description: |
   Fetches the rissk repository at `ref` from GitHub, writes a Kedro env from the `survey`
