@@ -46,6 +46,8 @@ def test_validate_defaults_version_and_filter_var():
     ({**SURVEY, "questionnaires": [{"name": ""}]}, "name"),
     ({**SURVEY, "questionnaires": [{"name": "q", "VERSION": ["10"]}]}, "VERSION"),
     ({**SURVEY, "questionnaires": [{"name": "q", "filter_var": "x"}]}, "filter_var"),
+    ({**SURVEY, "questionnaires": [{"name": "q", "filter_var": {"a": "1", "b": "2"}}]}, "exactly one"),
+    ({**SURVEY, "questionnaires": [{"name": "q", "version": [12]}]}, r"questionnaires\[0\]: unknown key 'version'"),
     ({**SURVEY, "output_root": "data"}, "output_root must be a URL"),
     ({**SURVEY, "output_root": "/abs/path"}, "output_root must be a URL"),
     ({**SURVEY, "zip_password": 1234}, "zip_password"),
@@ -57,6 +59,13 @@ def test_validate_defaults_version_and_filter_var():
 def test_validate_rejects(bad, msg):
     with pytest.raises(ValueError, match=msg):
         validate_survey_config(bad)
+
+
+def test_validate_treats_an_empty_filter_var_as_no_filter():
+    # An untouched optional object field in a form is stored as {}; the scoring node needs
+    # exactly one key, so {} means "no filter" rather than a StopIteration after two stages.
+    cfg = validate_survey_config({**SURVEY, "questionnaires": [{"name": "q", "filter_var": {}}]})
+    assert cfg["questionnaires"][0]["filter_var"] is None
 
 
 def test_validate_accepts_file_url_output_and_local_input():

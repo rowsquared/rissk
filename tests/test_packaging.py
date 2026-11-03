@@ -29,6 +29,13 @@ def test_wheel_contains_conf_base_only(tmp_path):
     assert not [n for n in names if n.startswith("rissk/_conf/") and "/base/" not in n]
 
 
+def test_package_version_matches_pyproject():
+    import rissk
+
+    py = tomllib.loads((REPO / "pyproject.toml").read_text())
+    assert rissk.__version__ == py["project"]["version"]
+
+
 def test_telemetry_hooks_are_disabled():
     from rissk import settings
 

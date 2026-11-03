@@ -204,15 +204,22 @@ def validate_survey_config(config: Mapping) -> dict:
     for i, q in enumerate(questionnaires):
         if not isinstance(q, Mapping) or not isinstance(q.get("name"), str) or not q["name"].strip():
             raise ValueError(f"survey config: questionnaires[{i}].name must be a non-empty string")
+        extra = sorted(set(q) - {"name", "VERSION", "filter_var"})
+        if extra:  # a mistyped VERSION or filter_var would silently change the scored population
+            raise ValueError(f"survey config: questionnaires[{i}]: unknown key {extra[0]!r} "
+                             "(allowed: name, VERSION, filter_var)")
         versions = q.get("VERSION")
         versions = [] if versions is None else versions
         if not isinstance(versions, list) or not all(
             isinstance(v, int) and not isinstance(v, bool) for v in versions
         ):
             raise ValueError(f"survey config: questionnaires[{i}].VERSION must be a list of integers")
-        filter_var = q.get("filter_var")
+        filter_var = q.get("filter_var") or None  # {} (an untouched form field) means no filter
         if filter_var is not None and not isinstance(filter_var, Mapping):
             raise ValueError(f"survey config: questionnaires[{i}].filter_var must be a mapping or null")
+        if filter_var is not None and len(filter_var) != 1:  # the scoring node filters on one answer
+            raise ValueError(f"survey config: questionnaires[{i}].filter_var must hold exactly one "
+                             f"variable: value pair; got {len(filter_var)}")
         normalised.append({"name": q["name"], "VERSION": list(versions),
                            "filter_var": copy.deepcopy(dict(filter_var)) if filter_var is not None else None})
 
