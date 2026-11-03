@@ -1,0 +1,40 @@
+# Settings of f/rissk/run_rissk. This file is the whole script definition: a push
+# (`wmill sync push`, by hand or from CI) resets any setting that is not in it, so the job
+# timeout belongs here, not in the UI. Unset, the instance default applies.
+# timeout: <seconds>   # about twice the longest known run for a survey
+summary: Run the RISSK pipeline for one survey
+description: |
+  Runs rissk.run.run_survey with the `survey` resource (type rissk_survey) as the
+  configuration and the `storage` resource (type s3) exported as the AWS environment
+  variables. rissk is installed from GitHub at the commit the deploy pinned (see the
+  #requirements: line of the script). Fails when any questionnaire failed; results land
+  under <output_root>/<survey>/latest/.
+kind: script
+schema:
+  $schema: 'https://json-schema.org/draft/2020-12/schema'
+  type: object
+  order:
+    - survey
+    - storage
+    - pipeline
+  properties:
+    survey:
+      type: object
+      format: resource-rissk_survey
+      description: The survey to run (resource of type rissk_survey).
+    storage:
+      type: object
+      format: resource-s3
+      description: Bucket credentials (resource of type s3), e.g. f/rissk/s3.
+    pipeline:
+      type: string
+      default: __default__
+      enum:
+        - __default__
+        - data_ingestion
+        - feature_creation
+        - rissk_scoring
+      description: Which stage to run; __default__ runs all three.
+  required:
+    - survey
+    - storage

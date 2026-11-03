@@ -1,0 +1,26 @@
+# Configuration — defaults. Each run selects a Kedro env (conf/<config>/globals.yml,
+# via `kedro run --env <config>`) that overrides these.
+#
+# Storage roots (interpolated by catalog.yml; the storage *mode* is implicit in their values):
+#   input_root  — where the survey's export zips live: a local path, or `s3://<bucket>`.
+#   work_root   — ALWAYS-LOCAL staging where zips are fetched + extracted (unzip is local-only).
+#   output_root — where stages 20→40 are written: a local path, or `s3://<bucket>` (s3fs, no aws CLI).
+# Combinations give: local / s3in / s3out / s3. Relative paths are resolved against the project root.
+input_root: "data"
+work_root: "data"
+output_root: "data"
+
+# Survey folder under the roots. Inputs:  <input_root>/<survey>/latest/10_RAW/<questionnaire>_*.zip
+survey: ""
+
+# The single questionnaire this configuration processes (one questionnaire per env).
+questionnaire:
+  name: ""
+  VERSION: []       # [] means "all versions found"
+  filter_var: null  # e.g. {consent_q: "1"} — only interviews with that paradata answer are scored
+
+# ── Example configs live in conf/<name>/globals.yml, e.g. conf/grdslchbs_test/globals.yml:
+#   input_root: /abs/path/to/data      # or s3://surveytool
+#   output_root: /abs/path/to/data     # or s3://surveytool
+#   survey: grdslchbs_test
+#   questionnaire: {name: slchbs_grenada_2627, VERSION: [10, 11, 12, 13]}

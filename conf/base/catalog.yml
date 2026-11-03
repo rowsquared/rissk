@@ -1,0 +1,107 @@
+# Data catalog. Every path is built from the templates below (keys starting with `_` are
+# resolved and then dropped by Kedro). Each value is read from the runtime params first and
+# from globals (conf/base + the selected env) as the fallback, so one catalog serves both
+# ways to run: `kedro run --env <env>` / run_survey("<env>") (globals from the env folder)
+# and run_survey(<mapping>) (everything passed as runtime params, env "base").
+#   work_root   — LOCAL: 10_RAW staging (zips fetched + extracted) AND the 20_INTERIM
+#                 intermediates (scratch; each produced-and-consumed within one pipeline,
+#                 so never needs to be on output_root/s3).
+#   output_root — deliverable outputs 30_PROCESSED + 35_SCORES (local or s3://).
+#   survey      — the folder under both roots.
+#   qnr_subdir  — '<questionnaire>/' when a survey has several questionnaires, '' otherwise.
+#
+# Note: 20_INTERIM lives under work_root (always local), NOT output_root. For local-output
+# envs this is the same place; for s3 output_root it keeps the intermediates off S3.
+_survey: ${runtime_params:survey,${globals:survey}}
+_work: ${runtime_params:work_root,${globals:work_root}}/${_survey}/latest
+_out: ${runtime_params:output_root,${globals:output_root}}/${_survey}/latest
+_qnr: ${runtime_params:qnr_subdir,''}
+
+# === RAW DATA (local staging — unzip + folder reads are local-filesystem only) ===
+# Zips staged by stage_input_zips_node from <input_root>/<survey>/latest/10_RAW/<name>_*.zip
+survey_zip_partitions:
+  type: partitions.PartitionedDataset
+  path: ${_work}/10_RAW
+  dataset:
+    type: rissk.datasets.PathDataset
+    filename_suffix: ".zip"
+
+# The extracted result (folders)
+extracted_survey_folders:
+  type: partitions.PartitionedDataset
+  path: ${_work}/10_RAW
+  dataset:
+    type: rissk.datasets.PathDataset
+
+# === INGESTED DataFrames ===
+paradata_raw:
+  type: pandas.ParquetDataset
+  filepath: ${_work}/20_INTERIM/${_qnr}paradata_raw.parquet
+
+raw_questionnaire:
+  type: pandas.ParquetDataset
+  filepath: ${_out}/30_PROCESSED/${_qnr}questionnaire.parquet
+
+raw_microdata:
+  type: pandas.ParquetDataset
+  filepath: ${_work}/20_INTERIM/${_qnr}microdata_raw.parquet
+
+microdata:
+  type: pandas.ParquetDataset
+  filepath: ${_out}/30_PROCESSED/${_qnr}microdata.parquet
+
+paradata_processed:
+  type: pandas.ParquetDataset
+  filepath: ${_out}/30_PROCESSED/${_qnr}paradata_processed.parquet
+
+
+# === FEATURE CREATION DataFrames ===
+item_features_base:
+  type: pandas.ParquetDataset
+  filepath: ${_work}/20_INTERIM/${_qnr}item_features_base.parquet
+
+unit_features_base:
+  type: pandas.ParquetDataset
+  filepath: ${_work}/20_INTERIM/${_qnr}unit_features_base.parquet
+
+item_features:
+  type: pandas.ParquetDataset
+  filepath: ${_out}/30_PROCESSED/${_qnr}item_features.parquet
+
+unit_features:
+  type: pandas.ParquetDataset
+  filepath: ${_out}/30_PROCESSED/${_qnr}unit_features.parquet
+
+# Aggregated AnswerRemoved events (used by rissk_scoring for unit-level s__answer_removed).
+removed_answers:
+  type: pandas.ParquetDataset
+  filepath: ${_out}/30_PROCESSED/${_qnr}removed_answers.parquet
+
+
+# === SCORING DataFrames ===
+item_scores:
+  type: pandas.ParquetDataset
+  filepath: ${_out}/35_SCORES/${_qnr}item_scores.parquet
+
+unit_rissk_scores:
+  type: pandas.CSVDataset
+  filepath: ${_out}/35_SCORES/${_qnr}unit_rissk_scores.csv
+
+responsible_scores:
+  type: pandas.CSVDataset
+  filepath: ${_out}/35_SCORES/${_qnr}responsible_scores.csv
+
+
+# === COMBINE (survey-level union of per-<qnr> microdata) ===
+# Scans 30_PROCESSED for every <qnr>/microdata.parquet. The top-level union file
+# (microdata.parquet) is also matched (partition key '') and skipped by the node.
+microdata_by_qnr:
+  type: partitions.PartitionedDataset
+  path: ${_out}/30_PROCESSED
+  dataset:
+    type: pandas.ParquetDataset
+  filename_suffix: microdata.parquet
+
+microdata_combined:
+  type: pandas.ParquetDataset
+  filepath: ${_out}/30_PROCESSED/microdata.parquet

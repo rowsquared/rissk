@@ -1,0 +1,10 @@
+# Multi-questionnaire survey env — run via rissk.run.run_survey("pmpmd").
+# One survey folder ("data/pmpmd copy") holds both questionnaires' zips in a shared 10_RAW.
+# The active questionnaire is injected per-run by the driver (runtime params), so there is
+# no single `questionnaire:` block here (the conf/base defaults are overridden at runtime).
+# NOTE: the survey name contains a space and must stay quoted. Do NOT use "pmpmd" —
+# data/pmpmd belongs to an unrelated project.
+input_root: "data"
+output_root: "data"
+work_root: "data"
+survey: "pmpmd copy"
