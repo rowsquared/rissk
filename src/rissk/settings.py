@@ -7,8 +7,9 @@ https://docs.kedro.org/en/stable/kedro_project_setup/settings.html."""
 # Hooks are executed in a Last-In-First-Out (LIFO) order.
 HOOKS = ()
 
-# Installed plugins for which to disable hook auto-registration.
-DISABLE_HOOKS_FOR_PLUGINS = ("kedro-viz",)
+# Installed plugins for which to disable hook auto-registration. kedro-telemetry ships with
+# Kedro; its hooks are off because the headless driver (rissk.run) never asks for consent.
+DISABLE_HOOKS_FOR_PLUGINS = ("kedro-viz", "kedro-telemetry")
 
 # Class that manages storing KedroSession data.
 # from kedro.framework.session.store import BaseSessionStore
