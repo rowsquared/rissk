@@ -19,8 +19,9 @@ schema:
       description: Where the export zips live, e.g. s3://surveytool (zips at <input_root>/<survey>/latest/10_RAW/<name>_*.zip)
     output_root:
       type: string
-      description: 'Where 30_PROCESSED and 35_SCORES are written, e.g. s3://surveytool. Must be remote:
-        the job folder is deleted after the run.'
+      pattern: '^[a-z][a-z0-9+.-]*://'
+      description: 'Where 30_PROCESSED and 35_SCORES are written: a URL such as s3://surveytool. Must
+        be remote: the job folder is deleted after the run.'
     questionnaires:
       type: array
       minItems: 1
