@@ -1,15 +1,24 @@
 """In-process driver for running the pipeline across a survey's questionnaires.
 
-One survey = one Kedro env (``conf/<env>/``). The questionnaires belonging to that
-survey are declared as one small YAML each under ``conf/<env>/questionnaires/``. This
-module enumerates them and runs the static 3-stage pipeline once per questionnaire
-(injecting the selection via runtime params), then runs a catalog-backed combine step
-once: it unions the per-questionnaire microdata into the survey-level microdata file
-via a plain ``catalog.load`` / pure function / ``catalog.save``, rather than a
-dedicated one-node Kedro pipeline.
+``run_survey`` takes the survey configuration in one of two forms:
 
-A legacy env with a single questionnaire in ``globals.yml`` and no ``questionnaires/``
-folder is run once, unchanged, with no combine step.
+* an **env name**: one survey = one Kedro env (``conf/<env>/``) in a checkout. The
+  questionnaires are one small YAML each under ``conf/<env>/questionnaires/``; Kedro loads
+  the env folder (globals and whatever else it holds) and the driver injects the selection
+  per questionnaire as runtime params. A legacy env with a single questionnaire in
+  ``globals.yml`` and no ``questionnaires/`` folder is run once, flat, with no combine.
+* a **mapping** (the shape of the Windmill ``rissk_survey`` resource, see
+  ``validate_survey_config``): nothing is read from any env folder. Everything becomes
+  runtime params on an ``env="base"`` session, the outputs use the questionnaire sub-folder
+  layout and the combine step runs. This form also works from an **installed** rissk (no
+  checkout): the wheel carries ``conf/base`` as ``rissk/_conf/base`` and that is the conf
+  source then; relative paths such as the default ``work_root`` resolve against the
+  working directory.
+
+Either way the static 3-stage pipeline runs once per questionnaire, then a catalog-backed
+combine step unions the per-questionnaire microdata into the survey-level microdata file
+via a plain ``catalog.load`` / pure function / ``catalog.save``. Logging is a plain
+console format (this is the headless driver; ``kedro run`` keeps ``conf/logging.yml``).
 """
 from __future__ import annotations
 
@@ -18,6 +27,8 @@ import logging
 import os
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 from typing import Callable, Dict, Optional, Union
 
@@ -27,6 +38,16 @@ import yaml
 logger = logging.getLogger(__name__)
 
 PathLike = Union[str, Path]
+
+PLAIN_LOGGING: dict = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"simple": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"}},
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "simple",
+                             "stream": "ext://sys.stdout"}},
+    "loggers": {"kedro": {"level": "INFO"}, "rissk": {"level": "INFO"}},
+    "root": {"handlers": ["console"], "level": "INFO"},
+}
 
 # Runtime keys the driver sets itself; a `parameters` override may not name them.
 RESERVED_RUNTIME_KEYS = frozenset(
@@ -38,11 +59,91 @@ _SURVEY_KEYS = frozenset(
 _URL = re.compile(r"^[a-z][a-z0-9+.-]*://")
 
 
+def _default_root() -> Path:
+    """The checkout root when rissk is imported from ``<root>/src/rissk``."""
+    import rissk
+    return Path(rissk.__file__).resolve().parents[2]
+
+
+def _packaged_conf() -> Path:
+    """``rissk/_conf`` inside the installed package (absent in a checkout)."""
+    return Path(str(files("rissk") / "_conf"))
+
+
 def _project_root(project_root: Optional[PathLike] = None) -> Path:
     if project_root is not None:
         return Path(project_root)
-    import rissk
-    return Path(rissk.__file__).resolve().parents[2]
+    return _default_root()
+
+
+def _is_checkout(root: Path) -> bool:
+    return (root / "pyproject.toml").is_file() and (root / "conf" / "base").is_dir()
+
+
+@dataclass(frozen=True)
+class _Project:
+    """Where Kedro runs from: a checkout (its ``conf/``) or an installed package."""
+
+    root: Path                 # KedroSession project_path
+    conf_source: Optional[str]  # None: the checkout's conf/; else the packaged rissk/_conf
+    installed: bool
+
+
+def _resolve_project(project_root: Optional[PathLike]) -> _Project:
+    if project_root is not None:
+        root = Path(project_root)
+        if not _is_checkout(root):
+            raise ValueError(f"{root} is not a rissk checkout (no pyproject.toml + conf/base)")
+        return _Project(root=root, conf_source=None, installed=False)
+    root = _default_root()
+    if _is_checkout(root):
+        return _Project(root=root, conf_source=None, installed=False)
+    packaged = _packaged_conf()
+    if packaged.is_dir():
+        return _Project(root=Path.cwd(), conf_source=str(packaged), installed=True)
+    raise RuntimeError(
+        f"rissk is neither a checkout at {root} nor an installed package with its "
+        f"configuration at {packaged}"
+    )
+
+
+def _prepare(project: _Project) -> None:
+    """Configure Kedro once per call: plain logging, the project settings, the CWD."""
+    from kedro.framework.project import LOGGING, configure_project
+    from kedro.framework.startup import bootstrap_project
+
+    LOGGING.configure(PLAIN_LOGGING)
+    if project.installed:
+        configure_project("rissk")
+        return
+    bootstrap_project(project.root)
+    # Anchor the CWD to the project root. Kedro resolves relative dataset paths against
+    # the project root, but stage_zips stages relative to the CWD; when a caller runs from
+    # elsewhere (e.g. a JupyterHub Notebook Job executes a COPY of the notebook from
+    # /jobs/<id>/) the two diverge and ingestion fails with "No partitions found". This
+    # keeps every run_survey caller correct regardless of the launch directory.
+    os.chdir(project.root)
+
+
+def _run_pipeline(project: _Project, env: str, runtime_params: Optional[dict], pipeline: str) -> None:
+    from kedro.framework.session import KedroSession
+
+    # Kedro 1.x names this `runtime_params` (feeds both params:* and the
+    # ${runtime_params:...} catalog resolver); it was `extra_params` pre-0.19.
+    with KedroSession.create(project_path=project.root, env=env, runtime_params=runtime_params,
+                             conf_source=project.conf_source) as session:
+        session.run(pipeline_names=[pipeline])
+
+
+def _combine(project: _Project, env: str, runtime_params: dict) -> None:
+    from kedro.framework.session import KedroSession
+
+    with KedroSession.create(project_path=project.root, env=env, runtime_params=runtime_params,
+                             conf_source=project.conf_source) as session:
+        catalog = session.load_context().catalog
+        partitions = catalog.load("microdata_by_qnr")
+        combined = combine_microdata(partitions)
+        catalog.save("microdata_combined", combined)
 
 
 def load_questionnaire_configs(env: str, project_root: Optional[PathLike] = None) -> list[dict]:
@@ -147,57 +248,56 @@ def _runtime_params(cfg: dict, questionnaire: Optional[dict]) -> dict:
     return params
 
 
+def _plan_runs(config: Union[str, Mapping], project: _Project):
+    """(env, [(label, runtime params or None)…], combine params or None) for a config."""
+    if isinstance(config, str):
+        if project.installed:
+            raise ValueError(
+                f"env {config!r} needs a checkout (conf/{config}/); from an installed rissk "
+                "pass the configuration as a mapping"
+            )
+        qnrs = load_questionnaire_configs(config, project.root)
+        if not qnrs:
+            # Legacy single-questionnaire env: questionnaire comes from globals, no combine.
+            return config, [(config, None)], None
+        runs = [(q["name"], {"questionnaire": q, "qnr_subdir": f"{q['name']}/"}) for q in qnrs]
+        return config, runs, {}
+    cfg = validate_survey_config(config)
+    runs = [(q["name"], _runtime_params(cfg, q)) for q in cfg["questionnaires"]]
+    return "base", runs, _runtime_params(cfg, None)
+
+
 def run_survey(
-    env: str,
+    config: Union[str, Mapping],
     project_root: Optional[PathLike] = None,
     pipeline: str = "__default__",
     run_combine: bool = True,
 ) -> dict[str, str]:
-    """Run the pipeline for every questionnaire in ``env``, then combine once.
+    """Run the pipeline for every questionnaire of ``config`` (an env name or a mapping),
+    then combine once.
 
     Returns an outcome map; failures are isolated per questionnaire so one bad
     questionnaire does not skip the rest.
     """
-    from kedro.framework.session import KedroSession
-    from kedro.framework.startup import bootstrap_project
-
-    root = _project_root(project_root)
-    bootstrap_project(root)
-    # Anchor the CWD to the project root. Kedro resolves relative dataset paths against
-    # the project root, but stage_zips stages relative to the CWD; when a caller runs from
-    # elsewhere (e.g. a JupyterHub Notebook Job executes a COPY of the notebook from
-    # /jobs/<id>/) the two diverge and ingestion fails with "No partitions found". This
-    # keeps every run_survey caller correct regardless of the launch directory.
-    os.chdir(root)
-    qnrs = load_questionnaire_configs(env, root)
+    project = _resolve_project(project_root)
+    _prepare(project)
+    env, runs, combine_params = _plan_runs(config, project)
     results: dict[str, str] = {}
 
-    def _run(label: str, runtime_params: Optional[dict], pipe: str) -> None:
-        print(f"=== run --env {env} --pipeline {pipe} [{label}] ===", flush=True)
+    for label, runtime_params in runs:
+        print(f"=== run --env {env} --pipeline {pipeline} [{label}] ===", flush=True)
         try:
-            # Kedro 1.x names this `runtime_params` (feeds both params:* and the
-            # ${runtime_params:...} catalog resolver); it was `extra_params` pre-0.19.
-            with KedroSession.create(project_path=root, env=env, runtime_params=runtime_params) as session:
-                session.run(pipeline_names=[pipe])
+            _run_pipeline(project, env, runtime_params, pipeline)
             results[label] = "OK"
         except Exception as exc:  # isolate failures across questionnaires
             results[label] = f"FAILED ({type(exc).__name__}: {exc})"
         print(f"--- {label}: {results[label]} ---", flush=True)
 
-    if not qnrs:
-        # Legacy single-questionnaire env: questionnaire comes from globals, no combine.
-        _run(env, None, pipeline)
-        return results
-
-    for q in qnrs:
-        name = q["name"]
-        _run(name, {"questionnaire": q, "qnr_subdir": f"{name}/"}, pipeline)
-
-    if run_combine:
+    if run_combine and combine_params is not None:
         label = "combine"
         print(f"=== combine microdata --env {env} [{label}] ===", flush=True)
         try:
-            combine_survey_microdata(env, root)
+            _combine(project, env, combine_params)
             results[label] = "OK"
         except Exception as exc:  # keep failure isolated, like the per-questionnaire runs
             results[label] = f"FAILED ({type(exc).__name__}: {exc})"
@@ -242,21 +342,17 @@ def combine_microdata(partitions: Dict[str, Callable[[], pd.DataFrame]]) -> pd.D
     return combined
 
 
-def combine_survey_microdata(env: str, project_root: Optional[PathLike] = None) -> None:
+def combine_survey_microdata(config: Union[str, Mapping], project_root: Optional[PathLike] = None) -> None:
     """Union the survey's per-<qnr> microdata into the survey-level microdata.parquet.
 
     Loads the ``microdata_by_qnr`` PartitionedDataset and saves ``microdata_combined``
     through the Kedro catalog, so it works for local and ``s3://`` output roots alike.
-    Runs standalone (used after the per-questionnaire loop, or on its own to rebuild the
-    union).
+    Runs standalone, on its own, to rebuild the union for an env name or a mapping.
     """
-    from kedro.framework.session import KedroSession
-    from kedro.framework.startup import bootstrap_project
-
-    root = _project_root(project_root)
-    bootstrap_project(root)
-    with KedroSession.create(project_path=root, env=env) as session:
-        catalog = session.load_context().catalog
-        partitions = catalog.load("microdata_by_qnr")
-        combined = combine_microdata(partitions)
-        catalog.save("microdata_combined", combined)
+    project = _resolve_project(project_root)
+    _prepare(project)
+    if isinstance(config, str):
+        env, runtime_params = config, {}
+    else:
+        env, runtime_params = "base", _runtime_params(validate_survey_config(config), None)
+    _combine(project, env, runtime_params)
