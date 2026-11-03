@@ -36,3 +36,28 @@ def test_questionnaire_param_runtime_override():
     cl = OmegaConfigLoader(conf_source="conf", base_env="base", default_run_env="grdslchbs_test",
                            runtime_params={"questionnaire": {"name": "pmpmd_household", "filter_var": None}})
     assert cl["parameters"]["questionnaire"]["name"] == "pmpmd_household"
+
+
+# --- Configuration as data: runtime params override the env's globals ----------------
+def _path(dataset, runtime_params):
+    cl = OmegaConfigLoader(conf_source="conf", base_env="base",
+                           default_run_env="grdslchbs_test", runtime_params=runtime_params)
+    return cl["catalog"][dataset]["path"]
+
+
+RP = {"survey": "pmpmd copy", "output_root": "s3://b", "work_root": "/w", "qnr_subdir": "hh/"}
+
+
+def test_runtime_roots_override_globals():
+    assert _filepath("microdata", RP) == "s3://b/pmpmd copy/latest/30_PROCESSED/hh/microdata.parquet"
+    assert _filepath("unit_rissk_scores", RP) == "s3://b/pmpmd copy/latest/35_SCORES/hh/unit_rissk_scores.csv"
+    assert _filepath("paradata_raw", RP) == "/w/pmpmd copy/latest/20_INTERIM/hh/paradata_raw.parquet"
+    assert _path("survey_zip_partitions", RP) == "/w/pmpmd copy/latest/10_RAW"
+    assert _path("microdata_by_qnr", RP) == "s3://b/pmpmd copy/latest/30_PROCESSED"
+    assert _filepath("microdata_combined", RP) == "s3://b/pmpmd copy/latest/30_PROCESSED/microdata.parquet"
+
+
+def test_templates_are_dropped_from_the_catalog():
+    cl = OmegaConfigLoader(conf_source="conf", base_env="base",
+                           default_run_env="grdslchbs_test", runtime_params={})
+    assert not [k for k in cl["catalog"] if k.startswith("_")]
