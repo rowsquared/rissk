@@ -13,8 +13,11 @@ folder is run once, unchanged, with no combine step.
 """
 from __future__ import annotations
 
+import copy
 import logging
 import os
+import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable, Dict, Optional, Union
 
@@ -24,6 +27,15 @@ import yaml
 logger = logging.getLogger(__name__)
 
 PathLike = Union[str, Path]
+
+# Runtime keys the driver sets itself; a `parameters` override may not name them.
+RESERVED_RUNTIME_KEYS = frozenset(
+    {"questionnaire", "qnr_subdir", "survey", "input_root", "output_root", "work_root"}
+)
+_SURVEY_KEYS = frozenset(
+    {"survey", "input_root", "output_root", "work_root", "questionnaires", "zip_password", "parameters"}
+)
+_URL = re.compile(r"^[a-z][a-z0-9+.-]*://")
 
 
 def _project_root(project_root: Optional[PathLike] = None) -> Path:
@@ -46,6 +58,93 @@ def load_questionnaire_configs(env: str, project_root: Optional[PathLike] = None
             raise ValueError(f"{path}: questionnaire yaml must set 'name'")
         configs.append(cfg)
     return configs
+
+
+def _non_empty_str(cfg: Mapping, key: str) -> str:
+    value = cfg.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"survey config: {key} must be a non-empty string")
+    return value
+
+
+def validate_survey_config(config: Mapping) -> dict:
+    """Check a survey configuration given as data and return a normalised copy.
+
+    The mapping has the shape of the Windmill ``rissk_survey`` resource: ``survey``,
+    ``input_root``, ``output_root`` (a URL: a run configured as data has no project folder
+    to write into; ``file:///abs/path`` for a local folder), ``questionnaires`` (each
+    ``name``, optional ``VERSION`` list of ints, optional ``filter_var`` mapping), and
+    optionally ``work_root`` (default ``data``, relative to the working directory),
+    ``zip_password`` and ``parameters`` (top-level keys of ``parameters.yml``, deep-merged
+    by Kedro over ``conf/base``). Unknown keys are rejected so a typo cannot pass silently.
+    """
+    if not isinstance(config, Mapping):
+        raise ValueError(
+            f"survey config must be a mapping (the rissk_survey resource); got {type(config).__name__}"
+        )
+    unknown = sorted(set(config) - _SURVEY_KEYS)
+    if unknown:
+        raise ValueError(f"survey config: unknown key {unknown[0]!r} (allowed: {sorted(_SURVEY_KEYS)})")
+
+    survey = _non_empty_str(config, "survey")
+    input_root = _non_empty_str(config, "input_root").rstrip("/")
+    output_root = _non_empty_str(config, "output_root").rstrip("/")
+    if not _URL.match(output_root):
+        raise ValueError(
+            "survey config: output_root must be a URL such as s3://bucket "
+            f"(file:///abs/path for a local folder); got {output_root!r}"
+        )
+    work_root = _non_empty_str(config, "work_root") if config.get("work_root") is not None else "data"
+
+    questionnaires = config.get("questionnaires")
+    if not isinstance(questionnaires, list) or not questionnaires:
+        raise ValueError("survey config: questionnaires must be a non-empty list")
+    normalised = []
+    for i, q in enumerate(questionnaires):
+        if not isinstance(q, Mapping) or not isinstance(q.get("name"), str) or not q["name"].strip():
+            raise ValueError(f"survey config: questionnaires[{i}].name must be a non-empty string")
+        versions = q.get("VERSION")
+        versions = [] if versions is None else versions
+        if not isinstance(versions, list) or not all(
+            isinstance(v, int) and not isinstance(v, bool) for v in versions
+        ):
+            raise ValueError(f"survey config: questionnaires[{i}].VERSION must be a list of integers")
+        filter_var = q.get("filter_var")
+        if filter_var is not None and not isinstance(filter_var, Mapping):
+            raise ValueError(f"survey config: questionnaires[{i}].filter_var must be a mapping or null")
+        normalised.append({"name": q["name"], "VERSION": list(versions),
+                           "filter_var": copy.deepcopy(dict(filter_var)) if filter_var is not None else None})
+
+    zip_password = config.get("zip_password")
+    if zip_password is not None and not isinstance(zip_password, str):
+        raise ValueError("survey config: zip_password must be a string or null")
+
+    parameters = config.get("parameters")
+    parameters = {} if parameters is None else parameters
+    if not isinstance(parameters, Mapping):
+        raise ValueError("survey config: parameters must be a mapping of parameters.yml keys")
+    reserved = sorted(RESERVED_RUNTIME_KEYS & set(parameters))
+    if reserved:
+        raise ValueError(f"survey config: parameters key {reserved[0]!r} is reserved (set by the driver)")
+
+    return {"survey": survey, "input_root": input_root, "output_root": output_root,
+            "work_root": work_root, "questionnaires": normalised,
+            "zip_password": zip_password or None, "parameters": copy.deepcopy(dict(parameters))}
+
+
+def _runtime_params(cfg: dict, questionnaire: Optional[dict]) -> dict:
+    """Kedro runtime params for one questionnaire of a validated config (``None``: the
+    survey-level combine step). ``parameters`` overrides are folded in as top-level keys;
+    Kedro deep-merges them over ``conf/base/parameters.yml``."""
+    params = {"survey": cfg["survey"], "input_root": cfg["input_root"],
+              "output_root": cfg["output_root"], "work_root": cfg["work_root"]}
+    if cfg.get("zip_password"):
+        params["zip_password"] = cfg["zip_password"]
+    params.update(copy.deepcopy(cfg["parameters"]))
+    if questionnaire is not None:
+        params["questionnaire"] = questionnaire
+        params["qnr_subdir"] = f"{questionnaire['name']}/"
+    return params
 
 
 def run_survey(
