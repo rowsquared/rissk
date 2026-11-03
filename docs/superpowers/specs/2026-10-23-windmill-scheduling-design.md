@@ -1,5 +1,10 @@
 # Scheduling RISSK on Windmill Community Edition
 
+> Superseded in part by [2026-11-03-rissk-installable-thin-runner-design.md](2026-11-03-rissk-installable-thin-runner-design.md):
+> sections 2, 3, 5 and 8 (tarball fetch, env materialisation, the runner's body, private
+> repositories) no longer describe the code. rissk is installed from GitHub by the runner's
+> one requirement line and takes the resource as its configuration.
+
 **Date:** 2026-10-23
 **Status:** Approved design (pre-implementation)
 **Repo:** rissk (Kedro 1.2.0, single `rissk` package), branch `kedro_pipeline`

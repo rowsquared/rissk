@@ -118,17 +118,21 @@ def test_sync_root_is_scoped_to_this_repo_and_never_touches_config():
     assert not conf.get("includeSchedules") and not conf.get("includeTriggers")
 
 
-def test_deploy_workflow_pushes_the_same_scope():
-    wf_path = REPO / ".github/workflows/windmill-sync.yml"
-    wf = yaml.safe_load(wf_path.read_text())
+def test_deploy_workflow_pins_the_commit_and_pushes_the_same_scope():
+    wf = yaml.safe_load((REPO / ".github/workflows/windmill-sync.yml").read_text())
     on = wf[True] if True in wf else wf["on"]  # PyYAML reads the `on:` key as boolean True
-    assert "windmill/**" in on["push"]["paths"] and "workflow_dispatch" in on
+    # Every push of the branch deploys (a rissk code change must redeploy too), no paths filter.
+    assert on["push"] == {"branches": ["kedro_pipeline"]} and "workflow_dispatch" in on
     job = wf["jobs"]["sync"]
     assert job["defaults"]["run"]["working-directory"] == "windmill"
-    runs = [s.get("run", "") for s in job["steps"]]
+    steps = [(s.get("name", ""), s.get("run", "")) for s in job["steps"]]
+    pin = next(r for n, r in steps if n == "Pin the rissk commit")
+    assert "GITHUB_SHA" in pin and "#rissk@git+https://github.com/rowsquared/rissk@" in pin and "grep" in pin
+    runs = [r for _, r in steps]
     rt_push = next(r for r in runs if r.startswith("wmill resource-type push"))
-    assert "rissk_survey.resource-type.yaml rissk_survey" in rt_push
     sync_push = next(r for r in runs if r.startswith("wmill sync push"))
+    assert runs.index(pin) < runs.index(sync_push)
+    assert "rissk_survey.resource-type.yaml rissk_survey" in rt_push
     for flag in ("--yes", "--skip-variables", "--skip-secrets", "--skip-resources",
                  "--skip-resource-types", "--skip-folders"):
         assert flag in sync_push, flag
@@ -136,6 +140,5 @@ def test_deploy_workflow_pushes_the_same_scope():
         assert '--workspace "$WMILL_WORKSPACE"' in cmd and '--token "$WMILL_TOKEN"' in cmd \
             and '--base-url "$WMILL_URL"' in cmd
     # The secret and the variables are read from the repository settings, never hardcoded.
-    assert job["env"]["WMILL_TOKEN"] == "${{ secrets.WMILL_TOKEN }}"
-    assert job["env"]["WMILL_URL"] == "${{ vars.WMILL_URL }}"
-    assert job["env"]["WMILL_WORKSPACE"] == "${{ vars.WMILL_WORKSPACE }}"
+    assert job["env"] == {"WMILL_URL": "${{ vars.WMILL_URL }}", "WMILL_WORKSPACE": "${{ vars.WMILL_WORKSPACE }}",
+                          "WMILL_TOKEN": "${{ secrets.WMILL_TOKEN }}"}

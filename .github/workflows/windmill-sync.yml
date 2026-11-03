@@ -1,7 +1,9 @@
 # Deploys the Windmill runner (windmill/f/rissk/run_rissk) and the rissk_survey resource
 # type to the Windmill workspace with the wmill CLI, so GitHub is the source of truth and
-# Windmill follows it. Setup and the two other ways to deploy: windmill/README.md,
-# "Deploying the runner".
+# Windmill follows it. The runner installs rissk from GitHub through its one requirement
+# line; this workflow pins that line to the pushed commit, so every push of the branch
+# deploys the runner and the rissk code together and Windmill's lockfile names the commit.
+# Setup and the two other ways to deploy: windmill/README.md, "Deploying the runner".
 #
 # Needs, under Settings → Secrets and variables → Actions:
 #   secret   WMILL_TOKEN      a Windmill user token (Account settings → Tokens)
@@ -11,10 +13,9 @@ name: Deploy the Windmill runner
 
 on:
   push:
-    branches: [kedro_pipeline]   # one deploying branch per workspace: the last push would win otherwise
-    paths:
-      - "windmill/**"
-      - ".github/workflows/windmill-sync.yml"
+    # One deploying branch per workspace: the last push would win otherwise. No paths filter:
+    # a change to the rissk code alone must redeploy too, since the runner installs it.
+    branches: [kedro_pipeline]
   workflow_dispatch:
 
 concurrency:
@@ -62,6 +63,13 @@ jobs:
         run: >-
           wmill resource-type push rissk_survey.resource-type.yaml rissk_survey
           --workspace "$WMILL_WORKSPACE" --token "$WMILL_TOKEN" --base-url "$WMILL_URL"
+
+      # The committed line installs the branch; the deployed script installs this exact
+      # commit, so Windmill re-locks on every push and its script page shows what runs.
+      - name: Pin the rissk commit
+        run: |
+          sed -i -E 's|^#rissk@git\+https://github\.com/rowsquared/rissk@.*$|#rissk@git+https://github.com/rowsquared/rissk@'"$GITHUB_SHA"'|' f/rissk/run_rissk.py
+          grep -q "^#rissk@git+https://github.com/rowsquared/rissk@$GITHUB_SHA\$" f/rissk/run_rissk.py
 
       # Scope: f/rissk/** only (wmill.yaml); the --skip flags repeat the file's settings so a
       # local edit of wmill.yaml cannot widen what CI touches. Windmill computes the script's
